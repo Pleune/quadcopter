@@ -19,19 +19,19 @@
 #include <stdio.h>
 
 /**
- * serial baud and calculator
+ * Serial baud and calculator
  */
 #define BAUD 57600
 #define BRC (F_CPU/16/BAUD-1)
 
 /**
- * the I2C speed and calculator
+ * The I2C speed and calculator
  * F_SCL is the clock speed
  */
 #define F_SCL 400000
 #define TWBR_CALC ((F_CPU-16*F_SCL)/(2*F_SCL))
 
-/*the charcter that seperates serial input packets*/
+/*The charcter that seperates serial input packets*/
 #define EOP '\n'
 
 /**
@@ -42,8 +42,8 @@
 #define MPU6050ADDR 0x68
 
 /**
- * these are the values read from the IMU
- * the z_ values are zero-state correction values
+ * These are the values read from the IMU.
+ * The z_ values are zero-state correction values.
  */
 double ax, ay, az = 0;
 double gx, gy, gz = 0;
@@ -51,16 +51,16 @@ double z_gx, z_gy, z_gz = 0;
 double temp = 0;
 
 /*multiplyer to the accelerometer error part added to the qyro data*/
-double accKp = 5;
+double accKp = .1;
 
 /*the orientation quaternion*/
 double q0 = 1, q1 = 0, q2 = 0, q3 = 0;
 
 /**
- * shared variables
+ * Shared variables:
  *
- * these are used by the serial interrupt to communicate with
- * the main loop
+ * These are used by the serial interrupt to communicate with
+ * the main loop.
  *
  * flag bits:
  * 7: print deltaT
@@ -201,8 +201,8 @@ int mpu6050_updateall()
 		return -1;
 
 	/**
-	 * begin reading values sequentally
-	 * all values are 16 bit, transfered as big endian
+	 * Begin reading values sequentally
+	 * all values are 16 bit, transfered as big endian.
 	 */
 	ax = (I2CReadACK()<<8) | I2CReadACK();
 	ay = (I2CReadACK()<<8) | I2CReadACK();
@@ -258,13 +258,13 @@ int main(void)
 
 	/**
 	 * This sets the boud rate to the value defined above,
-	 * it calculates the value needed in UBRR0 with the BRC macro
+	 * it calculates the value needed in UBRR0 with the BRC macro.
 	 *
-	 * serial transmit is then enabled, and the serial data recieve interrupt is enabled
-	 * with UCSR0B
+	 * Serial transmit is then enabled, and the serial data recieve interrupt is enabled
+	 * with UCSR0B.
 	 *
 	 * 8 bit serial with 2 stop bits is then enabled with UCSR0C,
-	 * the parity generator/checker is commented out
+	 * the parity generator/checker is commented out.
 	 */
 	UBRR0H = (BRC >> 8);
 	UBRR0L = BRC;
@@ -306,15 +306,15 @@ int main(void)
 		clock = TCNT1;
 
 		/**
-		 * Read sensors into memory here for the most accurate deltaT/sensor-data combination
+		 * Read sensors into memory here for the most accurate deltaT/sensor-data combination.
 		 */
 		mpu6050_updateall();
 
 		/**
-		 * calculate deltaT here
-		 * and reset it for next loop
+		 * Calculate deltaT here,
+		 * and reset it for next loop.
 		 *
-		 * deltaT is calculated based on the 16-bit timer0, which effectly counts clock cycles
+		 * deltaT is calculated based on the 16-bit timer0, which effectly counts clock cycles.
 		 */
 		dt = clock - lastclock;
 		lastclock = clock;
@@ -336,26 +336,26 @@ int main(void)
 		else
 		{
 			/**
-			 * This is the code that keeps track of the orientation of the quad copter
+			 * This is the code that keeps track of the orientation of the quad copter.
 			 *
-			 * HOWEVER, the quarternion keeps track of how to rotate the world space realitive to the quadcopter space
-			 * NOT the other way around
+			 * HOWEVER, the quarternion keeps track of how to rotate the world-space realitive to the quadcopter-space,
+			 * NOT the other way around.
 			 *
-			 * that means the common equasion vnew = Q * vorig * Q^-1 will get you a vector in world space from a vector in quad space
+			 * That means the common equasion vnew = Q * vorig * Q^-1 will get you a vector in world space from a vector in quad space.
 			 *
 			 * vorig is a quarternion that is (0, v1, v2, v3)
-			 * v[1-3] are just a vector
+			 * v[1-3] are just a vector.
 			 *
-			 * same thing for vnew, q0 will always end up as 0
+			 * The same thing for vnew, q0 will always end up as 0.
 			 *
 			 * world-space is realitive to the world/gravity/etc.
 			 * quad-space is realitive to the axies drawn on the IMO
 			 *
-			 * all quarternions q are (q0, q1, q2, q3)
+			 * All quarternions q are (q0, q1, q2, q3)
 			 */
 
 			/**
-			 * trapizoydal sum gor greater accusacy
+			 * Trapizoydal sum for greater accuracy.
 			 */
 			double gx_ = (lastgx+gx) * gyroK;
 			double gy_ = (lastgy+gy) * gyroK;
@@ -364,97 +364,99 @@ int main(void)
 			double mag = sqrt(ax*ax + ay*ay + az*az);
 
 			/**
-			 * normalized UP!!! vector
-			 * according to any accelerometer, everything is accelerating up at 1g
+			 * Normalized UP!!! vector
+			 * According to any accelerometer, everything is accelerating up at 1g.
 			 *
-			 * works best with the normalized quarternions and
-			 * cross product to produce onsistant results
+			 * Works best with the normalized quarternions and
+			 * cross product to produce onsistant results.
 			 */
 			double ax_ = ax / mag;
 			double ay_ = ay / mag;
 			double az_ = az / mag;
 
 			/**
-			 * this uses the oppisite of the
+			 * This uses the oppisite of the
 			 * vnew = Q * vorig * Q^-1
-			 * is uses:
+			 * It uses:
 			 * vnew = Q-1 * vorig * Q
 			 * to go from world-space to quad-space
 			 *
-			 * for any quarternions Q,
+			 * For any quarternions Q,
 			 * Q * Q^-1 = 1, or the multiplicitive quarternions idenity (1, 0, 0, 0)
 			 * this only happens if the multiplications are right after each other,
 			 * so Q * B * Q^-1 != B
 			 *
-			 * the inverse of a quaternions is however the oppisite of the non-inverted quaternion...
-			 * this means that when using the quaternion in the equasion above with inverted quaternions,
-			 * it preforms the reverse of the rotation
+			 * The inverse of a quaternions is however the oppisite of the non-inverted quaternion...
+			 * This means that when using the quaternion in the equasion above with inverted quaternions,
+			 * it preforms the reverse of the rotation.
 			 *
-			 * also note that the inverse of a unit quaternion is also the conjugate
-			 * to conjugate a quaternion, invert q1, q2 and q3
+			 * Also note that the inverse of a unit quaternion is also the conjugate
+			 * to conjugate a quaternion, invert q1, q2 and q3.
 			 *
 			 * * * *
 			 *
 			 * What the below block of code does is converts the world-space vector (0, 0, 1)
 			 * into the same vector in quad-sapce by the equasion Q-1 * (0, [0, 0, 1]) * Q...
 			 *
-			 * estx are parts 1-3 of the resulting quaternion, part 0 will always be 0
+			 * estx are parts 1-3 of the resulting quaternion, part 0 will always be 0.
 			 *
-			 * this should be the same vector that the accelerometer reads out
-			 * if the gyros were perfect
+			 * This should be the same vector that the accelerometer reads out
+			 * if the gyros were perfect.
+			 *
+			 * Each component of est is then divided by 2, simply to save instructions.
 			 */
-			double estx = -2*q0*q2 + 2*q1*q3;
+			double estx = 2*q1*q3 - 2*q0*q2;
 			double esty = 2*q0*q1 + 2*q2*q3;
-			double estz = q0*q0 - q1*q1 - q2*q2 + q3*q3;
+			double estz = (q0*q0 - q1*q1 - q2*q2 + q3*q3);
 
 			/**
-			 * the error calculated here is the cross product of (the accelerometer vector) x (the vector from above)
+			 * The error calculated here is the cross product of (the accelerometer vector) x (the vector from above).
 			 *
-			 * the cross product essentally calculates rotational velocities around each axis
+			 * The cross product essentally calculates rotational velocities around each axis
 			 * with the correct sign to move the vector above to the accelerometer vector
-			 * according to the right hand rule
+			 * according to the right hand rule.
 			 *
-			 * to get a more proportional correction to how far apart the vectors are,
-			 * use atan2
+			 * To get a more proportional correction to how far apart the vectors are,
+			 * use atan2.
 			 */
 			double errorx = ay_*estz - az_*esty;
 			double errory = az_*estx - ax_*estz;
 			double errorz = ax_*esty - ay_*estx;
 
 			/**
-			 * the error from above is now just added to the gyro readiong
+			 * The error from above is now just added to the gyro readiong
 			 * for this iteration...
 			 *
-			 * this means that the larger the qyro readings,
+			 * This means that the larger the qyro readings,
 			 * then the larger of a weight they have becasue the
 			 * error part is never scaled proportionally to
-			 * the qyro readings
+			 * the qyro readings.
 			 *
-			 * ex:
+			 * Ex:
 			 * in
 			 * 2+10
 			 * 2 has a 2/12 weight
 			 *
-			 * while in
+			 * While in
 			 * 2 + 100
 			 * 2 has a 2/102 weight
 			 */
-			gx_ = accKp * errorx * dt * 64 / 16000000;
-			gy_ = accKp * errory * dt * 64 / 16000000;
-			gz_ = accKp * errorz * dt * 64 / 16000000;
+			gx_ += accKp * errorx * dt * 64 / 16000000;
+			gy_ += accKp * errory * dt * 64 / 16000000;
+			gz_ += accKp * errorz * dt * 64 / 16000000;
 
 			/**
-			 * this block takes integrated qyro velocities (change in angle) and integrates a quaternion with them.
+			 * This block takes integrated qyro velocities (change in angle) and integrates a quaternion with them.
 			 * it can be done seperatly from the accelerometer junk above.
 			 *
-			 * it uses a formula that can be derrived from an extension of Euler's formula
+			 * It uses a formula that can be derrived from an extension of Euler's formula
 			 * shown here: https://fgiesen.wordpress.com/2012/08/24/quaternion-differentiation/
 			 *
-			 * basically,
+			 * Basically,
 			 * Qold = Qold + Qold*(0, gx, gy, gz)*dT
 			 * integrates a quaternion based on the gyro velocities.
 			 *
-			 * the gyro values must be in radians
+			 * The gyro values must be in radians.
 			 */
 			q0 += -q1*gx_ - q2*gy_ - q3*gz_;
 			q1 += q0*gx_ + q2*gz_ - q3*gy_;
