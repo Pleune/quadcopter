@@ -292,7 +292,7 @@ int main(void)
 		writestring("mpu init failed\n");
 	}
 
-	_delay_ms(2000);
+	//_delay_ms(2000);
 
 	mpu6050_calibrate();
 
@@ -483,6 +483,55 @@ int main(void)
 			//writestring(string);
 		}
 
+		/**
+		 * http://arxiv.org/pdf/0811.2889.pdf
+		 */
+
+		//target orientation
+		double qt0 = 1.0;
+		double qt1 = 0.0;
+		double qt2 = 0.0;
+		double qt3 = 0.0;
+
+		/**
+		 * Find the derivative between q and qt
+		 *
+		 * This is just 2*log(q^-1 * qt)
+		 * The 2 is dropped here to save cycles, basically.
+		 */
+		double qd0 = qt0*q0 + qt1*q1 + qt2*q2 + qt3*q3;
+		double qd1 = qt2*q3 - qt0*q1 + qt1*q0 - qt3*q2;
+		double qd2 = qt3*q1 - qt0*q2 - qt1*q3 + qt2*q0;
+		double qd3 = qt3*q0 - qt0*q3 + qt1*q2 - qt2*q1;
+
+		double halfangleerr1 = acos(qd0);
+		double halfangleerr2 = acos(-qd0);
+
+		double mag = sqrt(1.0 - qd0*qd0);
+
+		/**
+		 * The log( ... ) is actually found for both qt and -qt,
+		 * as they are the same otientation. then the qt or -qt with the
+		 * smallest theta is then chosen, as it is closest.
+		 *
+		 * Inverting all qdx is the same as inverting all qtx,
+		 * to save the computation from happening again.
+		 *
+		 * The angular rates to get to qt (or -qt) are then stored in
+		 * qd[1-3]
+		 */
+
+		if(abs(halfangleerr1) < abs(halfangleerr2))
+		{
+			qd1 *= halfangleerr1 / mag;
+			qd2 *= halfangleerr1 / mag;
+			qd3 *= halfangleerr1 / mag;
+		} else {
+			qd1 *= -halfangleerr2 / mag;
+			qd2 *= -halfangleerr2 / mag;
+			qd3 *= -halfangleerr2 / mag;
+		}
+
 		lastgx = gx;
 		lastgy = gy;
 		lastgz = gz;
@@ -492,7 +541,7 @@ int main(void)
 		{
 			p = 0;
 			char string[128];
-			sprintf(string, "q0: %f\tq1: %f\tq2: %f\tq3: %f\tdt: %u\n", q0, q1, q2, q3, dt);
+			sprintf(string, "theta1: %f\tomegax: %f\tomegay: %f\tomegaz: %f\tdt: %u\n", halfangleerr1, qd1, qd2, qd3, dt);
 			writestring(string);
 		}
 
@@ -550,6 +599,7 @@ ISR(USART_RX_vect)
 							break;
 						case 'r':
 							flags |=0x40;
+
 							break;
 						case 'c':
 							flags |=0x20;
