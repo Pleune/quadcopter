@@ -42,6 +42,12 @@
 #define MPU6050ADDR 0x68
 
 /**
+ * The CE pin on the nRF
+ */
+#define NRFCEHIGH() (PORTB |= 0x01)
+#define NRFCELOW() (PORTB &= 0xFE)
+
+/**
  * These are the values read from the IMU.
  * The z_ values are zero-state correction values.
  */
@@ -243,6 +249,26 @@ void mpu6050_calibrate()
 	z_gz = (long double)az / 500;
 }
 
+void SPITransmit(char cData)
+{
+	/* Start transmission */
+	SPDR = cData;
+	/* Wait for transmission complete */
+	while(!(SPSR & (1<<SPIF)));
+}
+
+void SPIStart()
+{
+	PORTD &= ~(1<<DDD4);
+	_delay_us(80);
+}
+
+void SPIStop()
+{
+	PORTD |= (1<<DDD4);
+	_delay_us(80);
+}
+
 int main(void)
 {
 	//values for use in the trapizoydal sum
@@ -251,6 +277,11 @@ int main(void)
 	//print information in the loop every x loops,
 	int p = 0;
 
+	DDRB = 0xFF;
+	PORTB = 0xFE;//keep CE on NRF low
+
+	DDRD = 0xFF;
+	PORTD = 0xFF;
 	//enable extermal interrupts
 	sei();
 
@@ -287,6 +318,34 @@ int main(void)
 	TWBR = TWBR_CALC;
 	TWCR = (1<<TWEN);
 
+	/**
+	 * Init NRF
+	 */
+	/* Enable SPI, Master, set clock rate fck/16 */
+	SPCR = (1<<SPE)|(1<<MSTR)|(1<<SPR0);
+
+	/* Power on, enable error checker thing, RX */
+	SPIStart();
+	SPITransmit(0x20);
+	SPITransmit(0x0F);
+	SPIStop();
+
+	/* turn off ShockBurst autoACK shit */
+	SPIStart();
+	SPITransmit(0x21);
+	SPITransmit(0x00);
+	SPIStop();
+
+	/* 256Kbpsi, high power */
+	SPIStart();
+	SPITransmit(0x26);
+	SPITransmit(0x2F);
+	SPIStop();
+
+	/* actually power up */
+	NRFCEHIGH();
+
+#ifdef GYRO
 	if(mpu6050_init())
 	{
 		writestring("mpu init failed\n");
@@ -295,6 +354,7 @@ int main(void)
 	//_delay_ms(2000);
 
 	mpu6050_calibrate();
+#endif
 
 	uint16_t lastclock = TCNT1;//16-bit read handled by compiler
 	while(1)
@@ -304,12 +364,12 @@ int main(void)
 		long double gyroK;
 
 		clock = TCNT1;
-
+#ifdef GYRO
 		/**
 		 * Read sensors into memory here for the most accurate deltaT/sensor-data combination.
 		 */
 		mpu6050_updateall();
-
+#endif
 		/**
 		 * Calculate deltaT here,
 		 * and reset it for next loop.
@@ -322,6 +382,7 @@ int main(void)
 		/******************************************************************
 		 * Start calculations
 		 */
+#ifdef GYRO
 		gyroK = .25*(long double)dt * (((long double)/* timer1 prescalar */64*(long double)/* max deg/s */2000)/((long double)F_CPU*(long double)/* 2^15 */32768)) * /*Deg to rad*/(3.14159265359/180);
 
 		if(flags&0x40)
@@ -473,16 +534,8 @@ int main(void)
 			q1 /= mag;
 			q2 /= mag;
 			q3 /= mag;
-
-			/**
-			 * uncomment this to print the estimated up vector from the last
-			 * iteration
-			 */
-			//char string[128];
-			//sprintf(string, "ex: %f\tey: %f\tez: %f\n", estx, esty, estz);
-			//writestring(string);
 		}
-
+#endif
 		/**
 		 * http://arxiv.org/pdf/0811.2889.pdf
 		 */
@@ -504,8 +557,8 @@ int main(void)
 		double qd2 = qt3*q1 - qt0*q2 - qt1*q3 + qt2*q0;
 		double qd3 = qt3*q0 - qt0*q3 + qt1*q2 - qt2*q1;
 
-		double halfangleerr1 = acos(qd0);
-		double halfangleerr2 = acos(-qd0);
+		double halfangleerr1 = 2.0 * acos(qd0);
+		double halfangleerr2 = 2.0 * acos(-qd0);
 
 		double mag = sqrt(1.0 - qd0*qd0);
 
@@ -521,15 +574,22 @@ int main(void)
 		 * qd[1-3]
 		 */
 
-		if(abs(halfangleerr1) < abs(halfangleerr2))
+		if(mag <= 0.01)
 		{
-			qd1 *= halfangleerr1 / mag;
-			qd2 *= halfangleerr1 / mag;
-			qd3 *= halfangleerr1 / mag;
+			qd1 = 0;
+			qd2 = 0;
+			qd3 = 0;
 		} else {
-			qd1 *= -halfangleerr2 / mag;
-			qd2 *= -halfangleerr2 / mag;
-			qd3 *= -halfangleerr2 / mag;
+			if(abs(halfangleerr1) < abs(halfangleerr2))
+			{
+				qd1 *= halfangleerr1 / mag;
+				qd2 *= halfangleerr1 / mag;
+				qd3 *= halfangleerr1 / mag;
+			} else {
+				qd1 *= -halfangleerr2 / mag;
+				qd2 *= -halfangleerr2 / mag;
+				qd3 *= -halfangleerr2 / mag;
+			}
 		}
 
 		lastgx = gx;
@@ -537,13 +597,48 @@ int main(void)
 		lastgz = gz;
 
 		/*print the quaternion every 100 loops*/
-		if(p++ == 100)
+		//if(p++ == 100)
+		//{
+		//	p = 0;
+		//	char string[128];
+		//	sprintf(string, "theta1: %f\tomegax: %f\tomegay: %f\tomegaz: %f\tdt: %u\n", halfangleerr1, qd1, qd2, qd3, dt);
+		//	writestring(string);
+		//}
+
+		SPIStart();
+
+		/**
+		 * ask the nrf for a RXx packet,
+		 * meanwhile it shifts out the status register.
+		 *
+		 * if the status reg says there is a packet, it will be shifted out next.
+		 */
+		SPITransmit(0x61);
+		char status = SPDR;
+
+		if(status & 0x40)
 		{
-			p = 0;
-			char string[128];
-			sprintf(string, "theta1: %f\tomegax: %f\tomegay: %f\tomegaz: %f\tdt: %u\n", halfangleerr1, qd1, qd2, qd3, dt);
-			writestring(string);
+			/* just to generate the clock */
+			SPITransmit(0x00);
+
+			char data = SPDR;
+
+			SPIStop();
+
+			writechar(data & 0b10000000 ? '1' : '0');
+			writechar(data & 0b01000000 ? '1' : '0');
+			writechar(data & 0b00100000 ? '1' : '0');
+			writechar(data & 0b00010000 ? '1' : '0');
+			writechar(data & 0b00001000 ? '1' : '0');
+			writechar(data & 0b00000100 ? '1' : '0');
+			writechar(data & 0b00000010 ? '1' : '0');
+			writechar(data & 0b00000001 ? '1' : '0');
+
+			writechar('\n');
+		} else {
+			SPIStop();
 		}
+
 
 		if(flags&0x20)
 		{
