@@ -42,6 +42,18 @@
 #define NRFCELOW() (PORTB &= 0xFE)
 
 /**
+ * DEBUG LEDS
+ */
+#define LED1ON() (PORTD |= 0x10)
+#define LED1OFF() (PORTD &= 0xEF)
+#define LED2ON() (PORTD |= 0x20)
+#define LED2OFF() (PORTD &= 0xDF)
+#define LED3ON() (PORTD |= 0x40)
+#define LED3OFF() (PORTD &= 0xBF)
+#define LED4ON() (PORTB |= 0x08)
+#define LED4OFF() (PORTB &= 0xF7)
+
+/**
  * These are the values read from the IMU.
  * The z_ values are zero-state correction values.
  */
