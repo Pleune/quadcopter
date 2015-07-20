@@ -44,14 +44,14 @@
 /**
  * DEBUG LEDS
  */
-#define LED1ON() (PORTD |= 0x10)
-#define LED1OFF() (PORTD &= 0xEF)
-#define LED2ON() (PORTD |= 0x20)
-#define LED2OFF() (PORTD &= 0xDF)
-#define LED3ON() (PORTD |= 0x40)
-#define LED3OFF() (PORTD &= 0xBF)
-#define LED4ON() (PORTB |= 0x08)
-#define LED4OFF() (PORTB &= 0xF7)
+#define LED1ON() (PORTD |= 0x20)
+#define LED1OFF() (PORTD &= 0xDF)
+#define LED2ON() (PORTD |= 0x40)
+#define LED2OFF() (PORTD &= 0xBF)
+#define LED3ON() (PORTD |= 0x80)
+#define LED3OFF() (PORTD &= 0x7F)
+#define LED4ON() (PORTB |= 0x10)
+#define LED4OFF() (PORTB &= 0xEF)
 
 /**
  * These are the values read from the IMU.
@@ -340,6 +340,23 @@ int main(void)
 
 	/* actually power up */
 	NRFCEHIGH();
+
+	_delay_ms(100);
+	LED1OFF();
+	_delay_ms(100);
+	LED2OFF();
+	_delay_ms(100);
+	LED3OFF();
+	_delay_ms(100);
+	LED4OFF();
+	_delay_ms(200);
+	LED4ON();
+	_delay_ms(100);
+	LED3ON();
+	_delay_ms(100);
+	LED2ON();
+	_delay_ms(100);
+	LED1ON();
 
 #ifdef GYRO
 	mpu6050_init()
