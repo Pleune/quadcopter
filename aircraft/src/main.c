@@ -330,6 +330,12 @@ int main(void)
 	SPITransmit(0x0F);
 	SPIStop();
 
+	/* Enable pipe 1, 1 byte */
+	SPIStart();
+	SPITransmit(0x31);
+	SPITransmit(0x01);
+	SPIStop();
+
 	/* turn off ShockBurst autoACK shit */
 	SPIStart();
 	SPITransmit(0x21);
@@ -618,6 +624,12 @@ int main(void)
 
 		if(status & 0x40)
 		{
+			static lastrx = 0;
+
+			char string[10];
+			sprintf(string, "%i\n", clock-lastrx);
+			writestring(string);
+
 			/* just to generate the clock */
 			SPITransmit(0x00);
 
@@ -625,7 +637,23 @@ int main(void)
 
 			SPIStop();
 
-			writechar(data & 0b10000000 ? '1' : '0');
+			SPIStart();
+			SPITransmit(0x27);
+			SPITransmit(0x40);
+			SPIStop();
+/*
+			writechar(status & 0b10000000 ? '1' : '0');
+			writechar(status & 0b01000000 ? '1' : '0');
+			writechar(status & 0b00100000 ? '1' : '0');
+			writechar(status & 0b00010000 ? '1' : '0');
+			writechar(status & 0b00001000 ? '1' : '0');
+			writechar(status & 0b00000100 ? '1' : '0');
+			writechar(status & 0b00000010 ? '1' : '0');
+			writechar(status & 0b00000001 ? '1' : '0');
+			writechar(status & 0b10000000 ? '1' : '0');
+
+			writestring(" : ");
+
 			writechar(data & 0b01000000 ? '1' : '0');
 			writechar(data & 0b00100000 ? '1' : '0');
 			writechar(data & 0b00010000 ? '1' : '0');
@@ -634,11 +662,14 @@ int main(void)
 			writechar(data & 0b00000010 ? '1' : '0');
 			writechar(data & 0b00000001 ? '1' : '0');
 
-			writechar('\n');
+			writechar('\n');*/
+
+			lastrx = clock;
 		} else {
 			SPIStop();
 		}
 
+		_delay_ms(1);
 
 		if(flags&0x20)
 		{
