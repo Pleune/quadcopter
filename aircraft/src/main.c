@@ -19,12 +19,6 @@
 #include <stdio.h>
 
 /**
- * Serial baud and calculator
- */
-#define BAUD 57600
-#define BRC (F_CPU/16/BAUD-1)
-
-/**
  * The I2C speed and calculator
  * F_SCL is the clock speed
  */
@@ -76,21 +70,6 @@ uint8_t flags = 0x00;
 
 /**************************************************************************************/
 
-void writechar( unsigned char data )
-{
-	/* Wait for empty transmit buffer */
-	while ( !( UCSR0A & (1<<UDRE0)) );
-	/* Put data into buffer, sends the data */
-	UDR0 = data;
-}
-
-inline void writestring(const char *s)
-{
-	int i=0;
-	while(s[i]!=0)
-		writechar(s[i++]);
-}
-
 uint8_t I2CGetStatus(void)
 {
 	uint8_t status;
@@ -104,8 +83,6 @@ int I2CStart(void)
 	TWCR |= (1<<TWINT)|(1<<TWSTA)|(1<<TWEN);
 	while ((TWCR & (1<<TWINT)) == 0);
 	uint8_t status = I2CGetStatus();
-	if(status == 0x28)
-	writechar('h');
 	return (status == 0x08) || (status == 0x10);
 }
 
@@ -249,23 +226,27 @@ void mpu6050_calibrate()
 	z_gz = (long double)az / 500;
 }
 
-void SPITransmit(char cData)
+unsigned char SPITransmit(unsigned char data)
 {
-	/* Start transmission */
-	SPDR = cData;
-	/* Wait for transmission complete */
-	while(!(SPSR & (1<<SPIF)));
+	/* Wait for empty transmit buffer */
+	while ( !( UCSR0A & (1<<UDRE0)) );
+	/* Put data into buffer, sends the data */
+	UDR0 = data;
+	/* Wait for data to be received */
+	while ( !(UCSR0A & (1<<RXC0)) );
+	/* Get and return received data from buffer */
+	return UDR0;
 }
 
-void SPIStart()
+void NRFStart()
 {
-	PORTD &= ~(1<<DDD4);
+	PORTD &= ~(1<<DDD2);
 	_delay_us(80);
 }
 
-void SPIStop()
+void NRFStop()
 {
-	PORTD |= (1<<DDD4);
+	PORTD |= (1<<DDD2);
 	_delay_us(80);
 }
 
@@ -282,25 +263,9 @@ int main(void)
 
 	DDRD = 0xFF;
 	PORTD = 0xFF;
-	//enable extermal interrupts
+
 	sei();
-
 	sleep_disable();
-
-	/**
-	 * This sets the boud rate to the value defined above,
-	 * it calculates the value needed in UBRR0 with the BRC macro.
-	 *
-	 * Serial transmit is then enabled, and the serial data recieve interrupt is enabled
-	 * with UCSR0B.
-	 *
-	 * 8 bit serial with 2 stop bits is then enabled with UCSR0C,
-	 * the parity generator/checker is commented out.
-	 */
-	UBRR0H = (BRC >> 8);
-	UBRR0L = BRC;
-	UCSR0B = (1 << TXEN0) | (1 << RXEN0) | (1 << RXCIE0);
-	UCSR0C = (1 << UCSZ01) | (3 << UCSZ00);// | (1 << UPM01);
 
 	/**
 	 * Timer 1, 16 bit
@@ -321,43 +286,51 @@ int main(void)
 	/**
 	 * Init NRF
 	 */
-	/* Enable SPI, Master, set clock rate fck/16 */
-	SPCR = (1<<SPE)|(1<<MSTR)|(1<<SPR0);
+	UBRR0 = 0;
+	/* Setting the XCKn port pin as output, enables master
+	 * mode. */
+	//done above --> XCKn_DDR |= (1<<XCKn);
+	/* Set MSPI mode of operation and SPI data mode 0. */
+	UCSR0C = (1<<UMSEL01)|(1<<UMSEL00)|(0<<UCPHA0)|(0<<UCPOL0);
+	/* Enable receiver and transmitter. */
+	UCSR0B = (1<<RXEN0)|(1<<TXEN0);
+	/* Set baud rate. */
+	/* IMPORTANT: The Baud Rate must be set after the
+	 * transmitter is enabled
+	 *
+	 * Fcpu/4
+	 */
+	UBRR0 = 1;
 
 	/* Power on, enable error checker thing, RX */
-	SPIStart();
+	NRFStart();
 	SPITransmit(0x20);
 	SPITransmit(0x0F);
-	SPIStop();
+	NRFStop();
 
 	/* Enable pipe 1, 1 byte */
-	SPIStart();
+	NRFStart();
 	SPITransmit(0x31);
 	SPITransmit(0x01);
-	SPIStop();
+	NRFStop();
 
 	/* turn off ShockBurst autoACK shit */
-	SPIStart();
+	NRFStart();
 	SPITransmit(0x21);
 	SPITransmit(0x00);
-	SPIStop();
+	NRFStop();
 
 	/* 256Kbpsi, high power */
-	SPIStart();
+	NRFStart();
 	SPITransmit(0x26);
 	SPITransmit(0x2F);
-	SPIStop();
+	NRFStop();
 
 	/* actually power up */
 	NRFCEHIGH();
 
 #ifdef GYRO
-	if(mpu6050_init())
-	{
-		writestring("mpu init failed\n");
-	}
-
-	//_delay_ms(2000);
+	mpu6050_init()
 
 	mpu6050_calibrate();
 #endif
@@ -602,16 +575,7 @@ int main(void)
 		lastgy = gy;
 		lastgz = gz;
 
-		/*print the quaternion every 100 loops*/
-		//if(p++ == 100)
-		//{
-		//	p = 0;
-		//	char string[128];
-		//	sprintf(string, "theta1: %f\tomegax: %f\tomegay: %f\tomegaz: %f\tdt: %u\n", halfangleerr1, qd1, qd2, qd3, dt);
-		//	writestring(string);
-		//}
-
-		SPIStart();
+		NRFStart();
 
 		/**
 		 * ask the nrf for a RXx packet,
@@ -619,8 +583,7 @@ int main(void)
 		 *
 		 * if the status reg says there is a packet, it will be shifted out next.
 		 */
-		SPITransmit(0x61);
-		char status = SPDR;
+		unsigned char status = SPITransmit(0x61);
 
 		if(status & 0x40)
 		{
@@ -628,45 +591,20 @@ int main(void)
 
 			char string[10];
 			sprintf(string, "%i\n", clock-lastrx);
-			writestring(string);
 
 			/* just to generate the clock */
-			SPITransmit(0x00);
+			unsigned char data = SPITransmit(0x00);
 
-			char data = SPDR;
+			NRFStop();
 
-			SPIStop();
-
-			SPIStart();
+			NRFStart();
 			SPITransmit(0x27);
 			SPITransmit(0x40);
-			SPIStop();
-/*
-			writechar(status & 0b10000000 ? '1' : '0');
-			writechar(status & 0b01000000 ? '1' : '0');
-			writechar(status & 0b00100000 ? '1' : '0');
-			writechar(status & 0b00010000 ? '1' : '0');
-			writechar(status & 0b00001000 ? '1' : '0');
-			writechar(status & 0b00000100 ? '1' : '0');
-			writechar(status & 0b00000010 ? '1' : '0');
-			writechar(status & 0b00000001 ? '1' : '0');
-			writechar(status & 0b10000000 ? '1' : '0');
-
-			writestring(" : ");
-
-			writechar(data & 0b01000000 ? '1' : '0');
-			writechar(data & 0b00100000 ? '1' : '0');
-			writechar(data & 0b00010000 ? '1' : '0');
-			writechar(data & 0b00001000 ? '1' : '0');
-			writechar(data & 0b00000100 ? '1' : '0');
-			writechar(data & 0b00000010 ? '1' : '0');
-			writechar(data & 0b00000001 ? '1' : '0');
-
-			writechar('\n');*/
+			NRFStop();
 
 			lastrx = clock;
 		} else {
-			SPIStop();
+			NRFStop();
 		}
 
 		_delay_ms(1);
