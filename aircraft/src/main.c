@@ -80,8 +80,6 @@ double q0 = 1, q1 = 0, q2 = 0, q3 = 0;
  */
 uint8_t flags = 0x00;
 
-/**************************************************************************************/
-
 uint8_t I2CGetStatus(void)
 {
 	uint8_t status;
@@ -154,7 +152,7 @@ int I2CStartReadFrom(uint8_t u8data)
 	return 0;
 }
 
-int mpu6050_init()
+int mpu6050Init()
 {
 	//set 2000 deg/s
 	if(I2CStartWriteTo(MPU6050ADDR))
@@ -184,7 +182,7 @@ int mpu6050_init()
 	return 0;
 }
 
-int mpu6050_updateall()
+int mpu6050UpdateAll()
 {
 	if(I2CStartWriteTo(MPU6050ADDR))
 		return -1;
@@ -212,7 +210,7 @@ int mpu6050_updateall()
 	return 0;
 }
 
-void mpu6050_calibrate()
+void mpu6050Calibrate()
 {
 	z_gx = 0;
 	z_gy = 0;
@@ -225,7 +223,7 @@ void mpu6050_calibrate()
 	int i;
 	for(i=0; i<500; i++)
 	{
-		mpu6050_updateall();
+		mpu6050UpdateAll();
 		ax += gx;
 		ay += gy;
 		az += gz;
@@ -359,9 +357,9 @@ int main(void)
 	LED1ON();
 
 #ifdef GYRO
-	mpu6050_init()
+	mpu6050Init()
 
-	mpu6050_calibrate();
+	mpu6050Calibrate();
 #endif
 
 	uint16_t lastclock = TCNT1;//16-bit read handled by compiler
@@ -376,7 +374,7 @@ int main(void)
 		/**
 		 * Read sensors into memory here for the most accurate deltaT/sensor-data combination.
 		 */
-		mpu6050_updateall();
+		mpu6050UpdateAll();
 #endif
 		/**
 		 * Calculate deltaT here,
@@ -640,7 +638,7 @@ int main(void)
 
 		if(flags&0x20)
 		{
-			mpu6050_calibrate();
+			mpu6050Calibrate();
 			flags &= 0xDF;
 		}
 	}
