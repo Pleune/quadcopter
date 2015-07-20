@@ -1,14 +1,3 @@
-/**
- * INPUT TO ARDUINO OVER SERIAL
- * ****************************
- *
- * send "pc\n" to re calibrate the gyros
- *
- * send "pr\n" to reset the quaternion to (1,0,0,0)
- *
- * send "p\n" to do both
- */
-
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <avr/sleep.h>
