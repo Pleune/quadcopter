@@ -33,14 +33,19 @@
 /**
  * DEBUG LEDS
  */
-#define LED1ON() (PORTD |= 0x20)
-#define LED1OFF() (PORTD &= 0xDF)
-#define LED2ON() (PORTD |= 0x40)
-#define LED2OFF() (PORTD &= 0xBF)
-#define LED3ON() (PORTD |= 0x80)
-#define LED3OFF() (PORTD &= 0x7F)
+#define LED1ON() (PORTD |= 0x80)
+#define LED1OFF() (PORTD &= 0x7F)
+#define LED2ON() (PORTB |= 0x02)
+#define LED2OFF() (PORTB &= 0xFD)
+#define LED3ON() (PORTB |= 0x04)
+#define LED3OFF() (PORTB &= 0xFB)
 #define LED4ON() (PORTB |= 0x10)
 #define LED4OFF() (PORTB &= 0xEF)
+
+uint8_t motor1 = 62;
+uint8_t motor2 = 62;
+uint8_t motor3 = 62;
+uint8_t motor4 = 62;
 
 /**
  * These are the values read from the IMU.
@@ -274,6 +279,27 @@ int main(void)
 	 * A prescalar of 256 overflows almost exactly once a seccond at 16Mhz
 	 */
 	TCCR1B = 0x03;//64
+
+	/**
+	 * PWM
+	 */
+	/* enable fastpwm modes, all 4 pins */
+	TCCR0A = 0xA3;
+	TCCR2A = 0xA3;
+
+	/* interrupt on overflow */
+	TIMSK0 = 0x01;
+	TIMSK2 = 0x01;
+
+	/* 1ms on each pin */
+	OCR0A = 62;
+	OCR0B = 62;
+	OCR2A = 62;
+	OCR2B = 62;
+
+	/* 256 prescalar, 244hz, starts clocks */
+	TCCR0B = 0x04;
+	TCCR2B = 0x06;
 
 	/**
 	 * this starts the I2C unit on the atmega chip at 400Khz clock
@@ -631,4 +657,16 @@ int main(void)
 			flags &= 0xDF;
 		}
 	}
+}
+
+ISR(TIMER0_OVF_vect)
+{
+	OCR0A = motor1;
+	OCR0B = motor2;
+}
+
+ISR(TIMER2_OVF_vect)
+{
+	OCR2A = motor3;
+	OCR2B = motor4;
 }
