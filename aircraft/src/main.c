@@ -330,7 +330,7 @@ int main(void)
 	/* Power on, enable error checker thing, RX */
 	NRFStart();
 	SPITransmit(0x20);
-	SPITransmit(0x0F);
+	SPITransmit(0x0E);
 	NRFStop();
 
 	/* Enable pipe 1, 1 byte */
@@ -351,8 +351,20 @@ int main(void)
 	SPITransmit(0x2F);
 	NRFStop();
 
+	/* Transmit address 0x44444444 */
+	NRFStart();
+	SPITransmit(0x30);
+	SPITransmit(0x44);
+	SPITransmit(0x44);
+	SPITransmit(0x44);
+	SPITransmit(0x44);
+	SPITransmit(0x44);
+	NRFStop();
+
 	/* actually power up */
 	NRFCEHIGH();
+
+	_delay_ms(4000);
 
 	_delay_ms(100);
 	LED1OFF();
@@ -617,37 +629,43 @@ int main(void)
 		lastgy = gy;
 		lastgz = gz;
 
-		NRFStart();
-
 		/**
 		 * ask the nrf for a RXx packet,
 		 * meanwhile it shifts out the status register.
 		 *
 		 * if the status reg says there is a packet, it will be shifted out next.
 		 */
-		unsigned char status = SPITransmit(0x61);
+		//NRFStart();
+		//unsigned char status = SPITransmit(0x61);
 
-		if(status & 0x40)
-		{
-			static lastrx = 0;
+		//if(status & 0x40)
+		//{
+		//	static lastrx = 0;
 
-			char string[10];
-			sprintf(string, "%i\n", clock-lastrx);
+		//	char string[10];
+		//	sprintf(string, "%i\n", clock-lastrx);
 
 			/* just to generate the clock */
-			unsigned char data = SPITransmit(0x00);
+		//	unsigned char data = SPITransmit(0x00);
 
-			NRFStop();
+		//	NRFStop();
 
-			NRFStart();
-			SPITransmit(0x27);
-			SPITransmit(0x40);
-			NRFStop();
+		//	NRFStart();
+		//	SPITransmit(0x27);
+		//	SPITransmit(0x40);
+		//	NRFStop();
 
-			lastrx = clock;
-		} else {
-			NRFStop();
-		}
+		//	lastrx = clock;
+
+		//	LED1OFF();
+		//} else {
+		//	NRFStop();
+		//}
+
+		NRFStart();
+		SPITransmit(0xA0);
+		SPITransmit('h');
+		NRFStop();
 
 		_delay_ms(1);
 

@@ -50,12 +50,14 @@ inline void writestring(const char *s)
 		writechar(s[i++]);
 }
 
-void SPITransmit(char cData)
+unsigned char SPITransmit(char cData)
 {
 	/* Start transmission */
 	SPDR = cData;
 	/* Wait for transmission complete */
 	while(!(SPSR & (1<<SPIF)));
+
+	return SPDR;
 }
 
 void NRFStart()
@@ -115,7 +117,7 @@ int main(void)
 	/* Power on, enable error checker thing, RX */
 	NRFStart();
 	SPITransmit(0x20);
-	SPITransmit(0x0E);
+	SPITransmit(0x0F);
 	NRFStop();
 
 	/* Enable pipe 1, 1 byte */
@@ -136,44 +138,40 @@ int main(void)
 	SPITransmit(0x2F);
 	NRFStop();
 
+	/* pipe 1 RX address */
+	NRFStart();
+	SPITransmit(0x2A);
+	SPITransmit(0x44);
+	SPITransmit(0x44);
+	SPITransmit(0x44);
+	SPITransmit(0x44);
+	SPITransmit(0x44);
+	NRFStop();
+
 	/* actually power up */
 	NRFCEHIGH();
 
 	uint16_t lastclock = TCNT1;//16-bit read handled by compiler
 	while(1)
 	{
-		uint16_t clock;
-		uint16_t dt;
-
-		clock = TCNT1;
-
-		/**
-		 * Calculate deltaT here,
-		 * and reset it for next loop.
-		 *
-		 * deltaT is calculated based on the 16-bit timer0, which effectly counts clock cycles.
-		 */
-		dt = clock - lastclock;
-		lastclock = clock;
-
 		NRFStart();
+		unsigned char status = SPITransmit(0x61);
+		if(status & 0x40)
+		{
+			/* just to generate the clock */
+			unsigned char data = SPITransmit(0x00);
+			NRFStop();
 
-		SPITransmit(0xA0);
-		char status = SPDR;
+			/* clear the interrupt */
+			NRFStart();
+			SPITransmit(0x27);
+			SPITransmit(0x40);
+			NRFStop();
 
-		SPITransmit(0x1A);
-		NRFStop();
-
-		//writechar(status & 0b10000000 ? '1' : '0');
-		//writechar(status & 0b01000000 ? '1' : '0');
-		//writechar(status & 0b00100000 ? '1' : '0');
-		//writechar(status & 0b00010000 ? '1' : '0');
-		//writechar(status & 0b00001000 ? '1' : '0');
-		//writechar(status & 0b00000100 ? '1' : '0');
-		//writechar(status & 0b00000010 ? '1' : '0');
-		//writechar(status & 0b00000001 ? '1' : '0');
-
-		//writechar('\n');
+			writechar('a');
+		} else {
+			NRFStop();
+		}
 	}
 
 	_delay_ms(1);
