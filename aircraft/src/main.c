@@ -254,6 +254,67 @@ void NRFStop()
 	_delay_us(80);
 }
 
+void msg(char *s)
+{
+	int index = 0;
+
+	NRFCELOW();
+
+	_delay_us(80);
+
+	/* switch to TX mode */
+	NRFStart();
+	SPITransmit(0x20);
+	SPITransmit(0x0E);
+	NRFStop();
+
+	NRFCEHIGH();
+
+	_delay_us(80);
+
+	while(s[index]!=0)
+	{
+		while(1) {
+			NRFStart();
+			unsigned char status = SPITransmit(0xA0);
+
+			if(status & 0x01)
+				NRFStop();
+			else
+				break;
+		}
+		SPITransmit(s[index++]);
+		NRFStop();
+
+		/* give the RX time to read a constant stream */
+		_delay_us(250);
+	}
+
+	while(1)
+	{
+		SPITransmit(0x17);
+		unsigned char status = SPITransmit(0x00);
+
+		if(status & 0x10)
+			break;
+	}
+
+	NRFCELOW();
+
+	_delay_us(80);
+
+	/* switch to RX mode */
+	NRFStart();
+	SPITransmit(0x20);
+	SPITransmit(0x0F);
+	NRFStop();
+
+	NRFCEHIGH();
+
+	_delay_us(80);
+
+}
+
 int main(void)
 {
 	//values for use in the trapizoydal sum
@@ -330,7 +391,7 @@ int main(void)
 	/* Power on, enable error checker thing, RX */
 	NRFStart();
 	SPITransmit(0x20);
-	SPITransmit(0x0E);
+	SPITransmit(0x0F);
 	NRFStop();
 
 	/* Enable pipe 1, 1 byte */
@@ -364,7 +425,7 @@ int main(void)
 	/* actually power up */
 	NRFCEHIGH();
 
-	_delay_ms(4000);
+	//_delay_ms(4000);
 
 	_delay_ms(100);
 	LED1OFF();
@@ -661,13 +722,9 @@ int main(void)
 		//} else {
 		//	NRFStop();
 		//}
-
-		NRFStart();
-		SPITransmit(0xA0);
-		SPITransmit('h');
-		NRFStop();
-
 		_delay_ms(1);
+
+		msg("test ONE TWO THREE FOU\n");
 
 		if(flags&0x20)
 		{

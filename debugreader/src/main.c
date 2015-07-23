@@ -1,33 +1,11 @@
-/**
- * INPUT TO ARDUINO OVER SERIAL
- * ****************************
- *
- * send "pc\n" to re calibrate the gyros
- *
- * send "pr\n" to reset the quaternion to (1,0,0,0)
- *
- * send "p\n" to do both
- */
-
 #include <avr/io.h>
-#include <avr/interrupt.h>
-#include <avr/sleep.h>
-
 #include <util/delay.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdio.h>
 
 /**
  * Serial baud and calculator
  */
 #define BAUD 57600
 #define BRC (F_CPU/16/BAUD-1)
-
-/**
- * the char that signifies the end of a serial packet incommint
- */
-#define EOP '\n'
 
 /**
  * The CE pin on the nRF
@@ -79,10 +57,6 @@ int main(void)
 
 	DDRD = 0xFF;
 	PORTD = 0xFF;
-	//enable extermal interrupts
-	sei();
-
-	sleep_disable();
 
 	/**
 	 * This sets the boud rate to the value defined above,
@@ -98,15 +72,6 @@ int main(void)
 	UBRR0L = BRC;
 	UCSR0B = (1 << TXEN0) | (1 << RXEN0) | (1 << RXCIE0);
 	UCSR0C = (1 << UCSZ01) | (3 << UCSZ00);// | (1 << UPM01);
-
-	/**
-	 * Timer 1, 16 bit
-	 * enable by setting prescaler only.
-	 * everything else left normal (counter only)
-	 *
-	 * A prescalar of 256 overflows almost exactly once a seccond at 16Mhz
-	 */
-	TCCR1B = 0x03;//64
 
 	/**
 	 * Init NRF
@@ -151,68 +116,24 @@ int main(void)
 	/* actually power up */
 	NRFCEHIGH();
 
-	uint16_t lastclock = TCNT1;//16-bit read handled by compiler
 	while(1)
 	{
 		NRFStart();
-		unsigned char status = SPITransmit(0x61);
-		if(status & 0x40)
+		SPITransmit(0x17);
+		unsigned char status = SPITransmit(0x00);
+		if(!(status & 0x01))
 		{
+			NRFStop();
+
+			NRFStart();
+			SPITransmit(0x61);
 			/* just to generate the clock */
 			unsigned char data = SPITransmit(0x00);
 			NRFStop();
 
-			/* clear the interrupt */
-			NRFStart();
-			SPITransmit(0x27);
-			SPITransmit(0x40);
-			NRFStop();
-
-			writechar('a');
+			writechar(data);
 		} else {
 			NRFStop();
-		}
-	}
-
-	_delay_ms(1);
-}
-
-/**
- * This is the serial input subroutine
- *
- * each group of charcters between new lines is a 'packet'
- *
- * a packet-type is denoted by the first charcter
- */
-ISR(USART_RX_vect)
-{
-	static uint8_t newpacket=1;
-	static uint8_t packettype;
-	static uint8_t packetcounter;
-	static char packetbuffer[20];
-
-	char c = UDR0;
-	if(newpacket)
-	{
-		newpacket=0;
-		packettype = c;
-		packetcounter=0;
-	} else {
-		if(c != EOP)
-		{
-			packetbuffer[packetcounter++] = c;
-		} else {
-			packetbuffer[packetcounter]=0;
-			switch(packettype)
-			{
-				/**
-				 * this is the code that gets exxectued after the entire packet
-				 * is received, based on the first charcter of the packet
-				 */
-			default:
-				break;
-			}
-			newpacket=1;
 		}
 	}
 }
