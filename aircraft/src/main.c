@@ -7,6 +7,8 @@
 #include <string.h>
 #include <stdio.h>
 
+#define GYRO
+
 /**
  * The I2C speed and calculator
  * F_SCL is the clock speed
@@ -148,17 +150,6 @@ int I2CStartReadFrom(uint8_t u8data)
 
 int mpu6050Init()
 {
-	//set 2000 deg/s
-	if(I2CStartWriteTo(MPU6050ADDR))
-		return -1;
-
-	if(!I2CWrite(0x1b))
-		{ I2CStop(); return -1; }
-
-	if(!I2CWrite(0x18))
-		{ I2CStop(); return -1; }
-
-	I2CStop();
 
 
 	//turn on
@@ -169,6 +160,17 @@ int mpu6050Init()
 		{ I2CStop(); return -1; }
 
 	if(!I2CWrite(0))//wake system
+		{ I2CStop(); return -1; }
+
+	I2CStop();
+	//set 2000 deg/s
+	if(I2CStartWriteTo(MPU6050ADDR))
+		return -1;
+
+	if(!I2CWrite(0x1b))
+		{ I2CStop(); return -1; }
+
+	if(!I2CWrite(0x18))
 		{ I2CStop(); return -1; }
 
 	I2CStop();
@@ -252,6 +254,46 @@ void NRFStop()
 {
 	PORTD |= (1<<DDD2);
 	_delay_us(80);
+}
+
+void NRFInit()
+{
+	/* Power on, enable error checker thing, RX */
+	NRFStart();
+	SPITransmit(0x20);
+	SPITransmit(0x0F);
+	NRFStop();
+
+	/* Enable pipe 1, 1 byte */
+	NRFStart();
+	SPITransmit(0x31);
+	SPITransmit(0x01);
+	NRFStop();
+
+	/* turn off ShockBurst autoACK shit */
+	NRFStart();
+	SPITransmit(0x21);
+	SPITransmit(0x00);
+	NRFStop();
+
+	/* 256Kbpsi, high power */
+	NRFStart();
+	SPITransmit(0x26);
+	SPITransmit(0x2F);
+	NRFStop();
+
+	/* Transmit address 0x44444444 */
+	NRFStart();
+	SPITransmit(0x30);
+	SPITransmit(0x44);
+	SPITransmit(0x44);
+	SPITransmit(0x44);
+	SPITransmit(0x44);
+	SPITransmit(0x44);
+	NRFStop();
+
+	/* actually power up */
+	NRFCEHIGH();
 }
 
 void msg(char *s)
@@ -353,14 +395,17 @@ int main(void)
 	TIMSK2 = 0x01;
 
 	/* 1ms on each pin */
-	OCR0A = 62;
-	OCR0B = 62;
-	OCR2A = 62;
-	OCR2B = 62;
+	OCR0A = motor1;
+	OCR0B = motor2;
+	OCR2A = motor3;
+	OCR2B = motor4;
 
 	/* 256 prescalar, 244hz, starts clocks */
 	TCCR0B = 0x04;
 	TCCR2B = 0x06;
+
+	/* give things a chance to boot */
+	_delay_ms(1000);
 
 	/**
 	 * this starts the I2C unit on the atmega chip at 400Khz clock
@@ -368,6 +413,8 @@ int main(void)
 	TWSR = 0;
 	TWBR = TWBR_CALC;
 	TWCR = (1<<TWEN);
+
+	mpu6050Init();
 
 	/**
 	 * Init NRF
@@ -388,44 +435,16 @@ int main(void)
 	 */
 	UBRR0 = 1;
 
-	/* Power on, enable error checker thing, RX */
-	NRFStart();
-	SPITransmit(0x20);
-	SPITransmit(0x0F);
-	NRFStop();
+	NRFInit();
 
-	/* Enable pipe 1, 1 byte */
-	NRFStart();
-	SPITransmit(0x31);
-	SPITransmit(0x01);
-	NRFStop();
+	_delay_ms(2600);
 
-	/* turn off ShockBurst autoACK shit */
-	NRFStart();
-	SPITransmit(0x21);
-	SPITransmit(0x00);
-	NRFStop();
+	motor1 = 62;
+	motor2 = 62;
+	motor3 = 62;
+	motor4 = 62;
 
-	/* 256Kbpsi, high power */
-	NRFStart();
-	SPITransmit(0x26);
-	SPITransmit(0x2F);
-	NRFStop();
-
-	/* Transmit address 0x44444444 */
-	NRFStart();
-	SPITransmit(0x30);
-	SPITransmit(0x44);
-	SPITransmit(0x44);
-	SPITransmit(0x44);
-	SPITransmit(0x44);
-	SPITransmit(0x44);
-	NRFStop();
-
-	/* actually power up */
-	NRFCEHIGH();
-
-	//_delay_ms(4000);
+	msg("starting\n");
 
 	_delay_ms(100);
 	LED1OFF();
@@ -445,9 +464,9 @@ int main(void)
 	LED1ON();
 
 #ifdef GYRO
-	mpu6050Init()
 
 	mpu6050Calibrate();
+	msg("calibrated\n");
 #endif
 
 	uint16_t lastclock = TCNT1;//16-bit read handled by compiler
@@ -633,6 +652,10 @@ int main(void)
 		/**
 		 * http://arxiv.org/pdf/0811.2889.pdf
 		 */
+		double qd0;
+		double qd1;
+		double qd2;
+		double qd3;
 
 		//target orientation
 		double qt0 = 1.0;
@@ -640,51 +663,43 @@ int main(void)
 		double qt2 = 0.0;
 		double qt3 = 0.0;
 
-		/**
-		 * Find the derivative between q and qt
-		 *
-		 * This is just 2*log(q^-1 * qt)
-		 * The 2 is dropped here to save cycles, basically.
-		 */
-		double qd0 = qt0*q0 + qt1*q1 + qt2*q2 + qt3*q3;
-		double qd1 = qt2*q3 - qt0*q1 + qt1*q0 - qt3*q2;
-		double qd2 = qt3*q1 - qt0*q2 - qt1*q3 + qt2*q0;
-		double qd3 = qt3*q0 - qt0*q3 + qt1*q2 - qt2*q1;
-
-		double halfangleerr1 = 2.0 * acos(qd0);
-		double halfangleerr2 = 2.0 * acos(-qd0);
-
-		double mag = sqrt(1.0 - qd0*qd0);
-
-		/**
-		 * The log( ... ) is actually found for both qt and -qt,
-		 * as they are the same otientation. then the qt or -qt with the
-		 * smallest theta is then chosen, as it is closest.
-		 *
-		 * Inverting all qdx is the same as inverting all qtx,
-		 * to save the computation from happening again.
-		 *
-		 * The angular rates to get to qt (or -qt) are then stored in
-		 * qd[1-3]
-		 */
-
-		if(mag <= 0.01)
+		if(qt0*q0 + qt1*q1 + qt2*q2 + qt3*q3 > 0)
 		{
-			qd1 = 0;
-			qd2 = 0;
-			qd3 = 0;
+			qt0 -= q0;
+			qt1 -= q1;
+			qt2 -= q2;
+			qt3 -= q3;
+			qd0 = q0*qt0 + q1*qt1 + q2*qt2 + q3*qt3;
+			qd1 = q0*qt1 - q1*qt0 + q2*qt3 - q3*qt2;
+			qd2 = q0*qt2 - q1*qt3 - q2*qt0 + q3*qt1;
+			qd3 = q0*qt3 + q1*qt2 - q2*qt1 - q3*qt0;
 		} else {
-			if(abs(halfangleerr1) < abs(halfangleerr2))
-			{
-				qd1 *= halfangleerr1 / mag;
-				qd2 *= halfangleerr1 / mag;
-				qd3 *= halfangleerr1 / mag;
-			} else {
-				qd1 *= -halfangleerr2 / mag;
-				qd2 *= -halfangleerr2 / mag;
-				qd3 *= -halfangleerr2 / mag;
-			}
+			qt0 -= q0;
+			qt1 -= q1;
+			qt2 -= q2;
+			qt3 -= q3;
+			qd0 = -q0*qt0 - q1*qt1 - q2*qt2 - q3*qt3;
+			qd1 = -q0*qt1 + q1*qt0 - q2*qt3 + q3*qt2;
+			qd2 = -q0*qt2 + q1*qt3 + q2*qt0 - q3*qt1;
+			qd3 = -q0*qt3 - q1*qt2 + q2*qt1 + q3*qt0;
 		}
+
+		if(p++ == 200)
+		{
+			p = 0;
+			char string[64];
+			sprintf(string, "a:%f\tx:%f\ty:%f\tz%f\n", q0, qd1, qd2, qd3);
+			msg(string);
+		}
+
+		qd1 *= 25.0;
+		qd2 *= 25.0;
+		qd3 *= 25.0;
+
+		motor1 = 72 + qd1 - qd2 + qd3;
+		motor2 = 72 - qd1 - qd2 - qd3;
+		motor3 = 72 - qd1 + qd2 + qd3;
+		motor4 = 72 + qd1 + qd2 - qd3;
 
 		lastgx = gx;
 		lastgy = gy;
@@ -722,9 +737,6 @@ int main(void)
 		//} else {
 		//	NRFStop();
 		//}
-		_delay_ms(1);
-
-		msg("test ONE TWO THREE FOU\n");
 
 		if(flags&0x20)
 		{
