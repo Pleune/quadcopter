@@ -1,0 +1,23 @@
+This project works off of three arduinos,
+
+One, on the quad, attatched to an NRF24 and gy-51 mpu6050 breakout,
+One, in a controller w/ an NRF24 and some control input
+And one, with an NRF24 just reading wireless serial output from the quad
+
+The controller code is not in place yet, I am currently working on atti hold.
+
+The atti hold code is quaternion based, meaning gymbal lock it not a thing, and in my opnion the math is very efficent/neat.
+
+There are a few main sections of the code:
+
+	- all of the initalization at the top of main()
+
+	- At the top of the loop, the gyroscope values are being integrated (as a quaternion), and the accelerometer values are weighted in.
+
+	- the target rates (qd, names will change aha) are calculated with quaternion derivatives
+
+	- the quad PIDs to those rates
+
+Feel free to use any or all of this code for your own benifit. Any links back to me are appreciated :+)
+
+- Mitchell Pleune
