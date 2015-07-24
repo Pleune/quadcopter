@@ -83,9 +83,9 @@ double iTermroll = 0;
 double iTermpitch = 0;
 double iTermyaw = 0;
 
-double lastcommandroll = 0;
-double lastcommandpitch = 0;
-double lastcommandyaw = 0;
+double lastinputroll = 0;
+double lastinputpitch = 0;
+double lastinputyaw = 0;
 
 /**
  * These are the values read from the IMU.
@@ -743,7 +743,7 @@ int main(void)
 			qd3 = 0;
 
 			error = qd1 - gx_;
-			dInput = qd1 - lastcommandroll;
+			dInput = gx_ - lastinputroll;
 			iTermroll += kIroll * dT_ * error;
 			if(iTermroll > iMaxroll)
 				iTermroll = iMaxroll;
@@ -754,10 +754,10 @@ int main(void)
 				commandroll = maxcommandroll;
 			else if(commandroll < mincommandroll)
 				commandroll = mincommandroll;
-			lastcommandroll = qd1;
+			lastinputroll = gx_;
 
 			error = qd2 - gy_;
-			dInput = qd2 - lastcommandpitch;
+			dInput = gy_ - lastinputpitch;
 			iTermpitch += kIpitch * dT_ * error;
 			if(iTermpitch > iMaxpitch)
 				iTermpitch = iMaxpitch;
@@ -768,10 +768,10 @@ int main(void)
 				commandpitch = maxcommandpitch;
 			else if(commandpitch < mincommandpitch)
 				commandpitch = mincommandpitch;
-			lastcommandpitch = qd2;
+			lastinputpitch = gy_;
 
 			error = qd3 - gz_;
-			dInput = qd3 - lastcommandyaw;
+			dInput = gz_ - lastinputyaw;
 			iTermyaw += kIyaw * dT_ * error;
 			if(iTermyaw > iMaxyaw)
 				iTermyaw = iMaxyaw;
@@ -782,7 +782,7 @@ int main(void)
 				commandyaw = maxcommandyaw;
 			else if(commandyaw < mincommandyaw)
 				commandyaw = mincommandyaw;
-			lastcommandyaw = qd3;
+			lastinputyaw = gz_;
 
 		if(p++ == 200)
 		{
