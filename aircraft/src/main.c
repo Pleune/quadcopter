@@ -44,10 +44,48 @@
 #define LED4ON() (PORTB |= 0x10)
 #define LED4OFF() (PORTB &= 0xEF)
 
+int enabled = 1;
+
 uint8_t motor1 = 62;
 uint8_t motor2 = 62;
 uint8_t motor3 = 62;
 uint8_t motor4 = 62;
+
+double kProll = 10.0;
+double kIroll = 45.0;
+double kDroll = 0.02;
+
+double kPpitch = 10.0;
+double kIpitch = 45.0;
+double kDpitch = 0.02;
+
+double kPyaw = 10.0;
+double kIyaw = 45.0;
+double kDyaw = 0.02;
+
+double iMaxroll = 5;
+double iMaxpitch = 5;
+double iMaxyaw = 5;
+
+double iMinroll = -5;
+double iMinpitch = -5;
+double iMinyaw = -5;
+
+double maxcommandroll = 25;
+double maxcommandpitch = 25;
+double maxcommandyaw = 25;
+
+double mincommandroll = -25;
+double mincommandpitch = -25;
+double mincommandyaw = -25;
+
+double iTermroll = 0;
+double iTermpitch = 0;
+double iTermyaw = 0;
+
+double lastcommandroll = 0;
+double lastcommandpitch = 0;
+double lastcommandyaw = 0;
 
 /**
  * These are the values read from the IMU.
@@ -381,6 +419,7 @@ int main(void)
 	 *
 	 * A prescalar of 256 overflows almost exactly once a seccond at 16Mhz
 	 */
+#define T1PSK 64//set this the same as the prescalar below
 	TCCR1B = 0x03;//64
 
 	/**
@@ -474,7 +513,6 @@ int main(void)
 	{
 		uint16_t clock;
 		uint16_t dt;
-		long double gyroK;
 
 		clock = TCNT1;
 #ifdef GYRO
@@ -496,8 +534,6 @@ int main(void)
 		 * Start calculations
 		 */
 #ifdef GYRO
-		gyroK = .25*(long double)dt * (((long double)/* timer1 prescalar */64*(long double)/* max deg/s */2000)/((long double)F_CPU*(long double)/* 2^15 */32768)) * /*Deg to rad*/(3.14159265359/180);
-
 		if(flags&0x40)
 		{
 			q0 = 1;
@@ -531,6 +567,7 @@ int main(void)
 			/**
 			 * Trapizoydal sum for greater accuracy.
 			 */
+#define gyroK (.25*(long double)dt * (((long double)/* timer1 prescalar */ T1PSK *(long double)/* max deg/s */2000)/((long double)F_CPU*(long double)/* 2^15 */32768)) * /*Deg to rad*/(3.14159265359/180))
 			double gx_ = (lastgx+gx) * gyroK;
 			double gy_ = (lastgy+gy) * gyroK;
 			double gz_ = (lastgz+gz) * gyroK;
@@ -615,9 +652,9 @@ int main(void)
 			 * 2 + 100
 			 * 2 has a 2/102 weight
 			 */
-			gx_ += accKp * errorx * dt * 64 / 16000000;
-			gy_ += accKp * errory * dt * 64 / 16000000;
-			gz_ += accKp * errorz * dt * 64 / 16000000;
+			gx_ += accKp * errorx * dt * T1PSK / 16000000;
+			gy_ += accKp * errory * dt * T1PSK / 16000000;
+			gz_ += accKp * errorz * dt * T1PSK / 16000000;
 
 			/**
 			 * This block takes integrated qyro velocities (change in angle) and integrates a quaternion with them.
@@ -652,7 +689,7 @@ int main(void)
 		/**
 		 * http://arxiv.org/pdf/0811.2889.pdf
 		 */
-		double qd0;
+		//double qd0;
 		double qd1;
 		double qd2;
 		double qd3;
@@ -669,7 +706,7 @@ int main(void)
 			qt1 -= q1;
 			qt2 -= q2;
 			qt3 -= q3;
-			qd0 = q0*qt0 + q1*qt1 + q2*qt2 + q3*qt3;
+			//qd0 = q0*qt0 + q1*qt1 + q2*qt2 + q3*qt3;
 			qd1 = q0*qt1 - q1*qt0 + q2*qt3 - q3*qt2;
 			qd2 = q0*qt2 - q1*qt3 - q2*qt0 + q3*qt1;
 			qd3 = q0*qt3 + q1*qt2 - q2*qt1 - q3*qt0;
@@ -678,28 +715,93 @@ int main(void)
 			qt1 -= q1;
 			qt2 -= q2;
 			qt3 -= q3;
-			qd0 = -q0*qt0 - q1*qt1 - q2*qt2 - q3*qt3;
+			//qd0 = -q0*qt0 - q1*qt1 - q2*qt2 - q3*qt3;
 			qd1 = -q0*qt1 + q1*qt0 - q2*qt3 + q3*qt2;
 			qd2 = -q0*qt2 + q1*qt3 + q2*qt0 - q3*qt1;
 			qd3 = -q0*qt3 - q1*qt2 + q2*qt1 + q3*qt0;
 		}
 
+		if(enabled)
+		{
+			double commandpitch;
+			double commandroll;
+			double commandyaw;
+
+#define Kdt (64 / F_CPU)
+#define gyroK (long double)/* max deg/s */2000 / ((long double)/* 2^15 */32768) * /*Deg to rad*/(3.14159265359/180)
+			double dT_ = (double)dt * (double)Kdt;
+
+			double gx_ = gx * gyroK;
+			double gy_ = gy * gyroK;
+			double gz_ = gz * gyroK;
+
+			double dInput;
+			double error;
+
+			qd1 = 0;
+			qd2 = 0;
+			qd3 = 0;
+
+			error = qd1 - gx_;
+			dInput = qd1 - lastcommandroll;
+			iTermroll += kIroll * dT_ * error;
+			if(iTermroll > iMaxroll)
+				iTermroll = iMaxroll;
+			else if(iTermroll < iMinroll)
+				iTermroll = iMinroll;
+			commandroll = kProll * error + iTermroll - kDroll / kDroll *dInput;
+			if(commandroll > maxcommandroll)
+				commandroll = maxcommandroll;
+			else if(commandroll < mincommandroll)
+				commandroll = mincommandroll;
+			lastcommandroll = qd1;
+
+			error = qd2 - gy_;
+			dInput = qd2 - lastcommandpitch;
+			iTermpitch += kIpitch * dT_ * error;
+			if(iTermpitch > iMaxpitch)
+				iTermpitch = iMaxpitch;
+			else if(iTermpitch < iMinpitch)
+				iTermpitch = iMinpitch;
+			commandpitch = kPpitch * error + iTermpitch - kDpitch / kDpitch *dInput;
+			if(commandpitch > maxcommandpitch)
+				commandpitch = maxcommandpitch;
+			else if(commandpitch < mincommandpitch)
+				commandpitch = mincommandpitch;
+			lastcommandpitch = qd2;
+
+			error = qd3 - gz_;
+			dInput = qd3 - lastcommandyaw;
+			iTermyaw += kIyaw * dT_ * error;
+			if(iTermyaw > iMaxyaw)
+				iTermyaw = iMaxyaw;
+			else if(iTermyaw < iMinyaw)
+				iTermyaw = iMinyaw;
+			commandyaw = kPyaw * error + iTermyaw - kDyaw / kDyaw *dInput;
+			if(commandyaw > maxcommandyaw)
+				commandyaw = maxcommandyaw;
+			else if(commandyaw < mincommandyaw)
+				commandyaw = mincommandyaw;
+			lastcommandyaw = qd3;
+
 		if(p++ == 200)
 		{
 			p = 0;
 			char string[64];
-			sprintf(string, "a:%f\tx:%f\ty:%f\tz%f\n", q0, qd1, qd2, qd3);
+			sprintf(string, "1: %f\t2: %f\t3: %f\t4: %f\n", commandroll, commandpitch, commandyaw, 0.0);
 			msg(string);
 		}
 
-		qd1 *= 25.0;
-		qd2 *= 25.0;
-		qd3 *= 25.0;
-
-		motor1 = 72 + qd1 - qd2 + qd3;
-		motor2 = 72 - qd1 - qd2 - qd3;
-		motor3 = 72 - qd1 + qd2 + qd3;
-		motor4 = 72 + qd1 + qd2 - qd3;
+			motor1 = (int)(85 + commandroll - commandpitch);// + commandyaw);
+			motor2 = (int)(85 - commandroll - commandpitch);// - commandyaw);
+			motor3 = (int)(85 - commandroll + commandpitch);// + commandyaw);
+			motor4 = (int)(85 + commandroll + commandpitch);// - commandyaw);
+		} else {
+			motor1 = 62;
+			motor2 = 62;
+			motor3 = 62;
+			motor4 = 62;
+		}
 
 		lastgx = gx;
 		lastgy = gy;
