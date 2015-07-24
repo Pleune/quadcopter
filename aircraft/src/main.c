@@ -53,15 +53,15 @@ uint8_t motor2 = 62;
 uint8_t motor3 = 62;
 uint8_t motor4 = 62;
 
-double kProll = 15.0;
-double kIroll = 5.0;
+double kProll = 5.0;
+double kIroll = 3.0;
 double kDroll = 0.3;
 
-double kPpitch = 15.0;
-double kIpitch = 5.0;
+double kPpitch = 5.0;
+double kIpitch = 3.0;
 double kDpitch = 0.3;
 
-double kPyaw = 30.0;
+double kPyaw = 5.0;
 double kIyaw = 10.0;
 double kDyaw = 0.05;
 
@@ -728,12 +728,18 @@ int main(void)
 			qd3 = -q0*qt3 - q1*qt2 + q2*qt1 + q3*qt0;
 		}
 
+
+#define Kdt ((double)64.0 / (double)F_CPU)
+#define gyroK (long double)/* max deg/s */2000 / ((long double)/* 2^15 */32768) * /*Deg to rad*/(3.14159265359/180)
+		long double dT_ = (double)dt * Kdt;
 		/**
 		 * ask the nrf for a RXx packet,
 		 * meanwhile it shifts out the status register.
 		 *
 		 * if the status reg says there is a packet, it will be shifted out next.
 		 */
+		static long double time = 0;
+
 		NRFStart();
 		unsigned char status = SPITransmit(0x61);
 
@@ -750,7 +756,13 @@ int main(void)
 			SPITransmit(0x27);
 			SPITransmit(0x40);
 			NRFStop();
+			time = 0;
 		} else {
+			time += dT_;
+
+			if(time > .5)
+				throttle = 62;
+
 			NRFStop();
 		}
 
@@ -765,10 +777,6 @@ int main(void)
 			double commandpitch;
 			double commandroll;
 			double commandyaw;
-
-#define Kdt ((double)64.0 / (double)F_CPU)
-#define gyroK (long double)/* max deg/s */2000 / ((long double)/* 2^15 */32768) * /*Deg to rad*/(3.14159265359/180)
-			long double dT_ = (double)dt * Kdt;
 
 			double gx_ = gx * gyroK;
 			double gy_ = gy * gyroK;
@@ -795,9 +803,9 @@ int main(void)
 			static double lastinputpitch = 0;
 			static double lastinputyaw = 0;
 
-			qd1 *= 0.0;
-			qd2 *= 0.0;
-			qd3 *= 0.0;
+			qd1 *= 5.0;
+			qd2 *= 5.0;
+			qd3 *= 5.0;
 
 			static double qd1_s = 0;
 			static double qd2_s = 0;
