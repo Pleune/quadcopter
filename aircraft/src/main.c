@@ -51,25 +51,25 @@ uint8_t motor2 = 62;
 uint8_t motor3 = 62;
 uint8_t motor4 = 62;
 
-double kProll = 10.0;
-double kIroll = 45.0;
-double kDroll = 0.02;
+double kProll = 15.0;
+double kIroll = 5.0;
+double kDroll = 0.3;
 
-double kPpitch = 10.0;
-double kIpitch = 45.0;
-double kDpitch = 0.02;
+double kPpitch = 15.0;
+double kIpitch = 5.0;
+double kDpitch = 0.3;
 
-double kPyaw = 10.0;
-double kIyaw = 45.0;
-double kDyaw = 0.02;
+double kPyaw = 30.0;
+double kIyaw = 10.0;
+double kDyaw = 0.05;
 
-double iMaxroll = 5;
-double iMaxpitch = 5;
-double iMaxyaw = 5;
+double iMaxroll = 20;
+double iMaxpitch = 20;
+double iMaxyaw = 20;
 
-double iMinroll = -5;
-double iMinpitch = -5;
-double iMinyaw = -5;
+double iMinroll = -20;
+double iMinpitch = -20;
+double iMinyaw = -20;
 
 double maxcommandroll = 25;
 double maxcommandpitch = 25;
@@ -79,13 +79,7 @@ double mincommandroll = -25;
 double mincommandpitch = -25;
 double mincommandyaw = -25;
 
-double iTermroll = 0;
-double iTermpitch = 0;
-double iTermyaw = 0;
-
-double lastinputroll = 0;
-double lastinputpitch = 0;
-double lastinputyaw = 0;
+double smoothness = 10;
 
 /**
  * These are the values read from the IMU.
@@ -727,75 +721,93 @@ int main(void)
 			double commandroll;
 			double commandyaw;
 
-#define Kdt (64 / F_CPU)
+#define Kdt ((double)64.0 / (double)F_CPU)
 #define gyroK (long double)/* max deg/s */2000 / ((long double)/* 2^15 */32768) * /*Deg to rad*/(3.14159265359/180)
-			double dT_ = (double)dt * (double)Kdt;
+			long double dT_ = (double)dt * Kdt;
 
 			double gx_ = gx * gyroK;
 			double gy_ = gy * gyroK;
 			double gz_ = gz * gyroK;
 
+			static double gx_s = 0;
+			static double gy_s = 0;
+			static double gz_s = 0;
+
+			double weight = smoothness * dT_;
+
+			gx_s = gx_s * (1.0 - weight) + gx_ * (weight);
+			gy_s = gy_s * (1.0 - weight) + gy_ * (weight);
+			gz_s = gz_s * (1.0 - weight) + gz_ * (weight);
+
 			double dInput;
 			double error;
+
+			static double iTermroll = 0;
+			static double iTermpitch = 0;
+			static double iTermyaw = 0;
+
+			static double lastinputroll = 0;
+			static double lastinputpitch = 0;
+			static double lastinputyaw = 0;
 
 			qd1 = 0;
 			qd2 = 0;
 			qd3 = 0;
 
 			error = qd1 - gx_;
-			dInput = gx_ - lastinputroll;
+			dInput = gx_s - lastinputroll;
 			iTermroll += kIroll * dT_ * error;
 			if(iTermroll > iMaxroll)
 				iTermroll = iMaxroll;
 			else if(iTermroll < iMinroll)
 				iTermroll = iMinroll;
-			commandroll = kProll * error + iTermroll - kDroll / kDroll *dInput;
+			commandroll = kProll * error + iTermroll - kDroll * dInput / dT_;
 			if(commandroll > maxcommandroll)
 				commandroll = maxcommandroll;
 			else if(commandroll < mincommandroll)
 				commandroll = mincommandroll;
-			lastinputroll = gx_;
+			lastinputroll = gx_s;
 
 			error = qd2 - gy_;
-			dInput = gy_ - lastinputpitch;
+			dInput = gy_s - lastinputpitch;
 			iTermpitch += kIpitch * dT_ * error;
 			if(iTermpitch > iMaxpitch)
 				iTermpitch = iMaxpitch;
 			else if(iTermpitch < iMinpitch)
 				iTermpitch = iMinpitch;
-			commandpitch = kPpitch * error + iTermpitch - kDpitch / kDpitch *dInput;
+			commandpitch = kPpitch * error + iTermpitch - kDpitch * dInput / dT_;
 			if(commandpitch > maxcommandpitch)
 				commandpitch = maxcommandpitch;
 			else if(commandpitch < mincommandpitch)
 				commandpitch = mincommandpitch;
-			lastinputpitch = gy_;
+			lastinputpitch = gy_s;
 
 			error = qd3 - gz_;
-			dInput = gz_ - lastinputyaw;
+			dInput = gz_s - lastinputyaw;
 			iTermyaw += kIyaw * dT_ * error;
 			if(iTermyaw > iMaxyaw)
 				iTermyaw = iMaxyaw;
 			else if(iTermyaw < iMinyaw)
 				iTermyaw = iMinyaw;
-			commandyaw = kPyaw * error + iTermyaw - kDyaw / kDyaw *dInput;
+			commandyaw = kPyaw * error + iTermyaw - kDyaw * dInput / dT_;
 			if(commandyaw > maxcommandyaw)
 				commandyaw = maxcommandyaw;
 			else if(commandyaw < mincommandyaw)
 				commandyaw = mincommandyaw;
-			lastinputyaw = gz_;
+			lastinputyaw = gz_s;
 
 		if(p++ == 200)
 		{
 			p = 0;
 			char string[64];
-			sprintf(string, "1: %f\t2: %f\t3: %f\t4: %f\n", commandroll, commandpitch, commandyaw, 0.0);
+			sprintf(string, "1: %f\t2: %f\t3: %f\t4: %f\n", commandroll, commandpitch, commandyaw, weight);
 			msg(string);
 		}
 
-			motor1 = (int)(85 + commandroll - commandpitch);// + commandyaw);
-			motor2 = (int)(85 - commandroll - commandpitch);// - commandyaw);
-			motor3 = (int)(85 - commandroll + commandpitch);// + commandyaw);
-			motor4 = (int)(85 + commandroll + commandpitch);// - commandyaw);
+			motor1 = (int)(85 + commandroll - commandpitch + commandyaw);
+			motor2 = (int)(85 - commandroll - commandpitch - commandyaw);
+			motor3 = (int)(85 - commandroll + commandpitch + commandyaw);
+			motor4 = (int)(85 + commandroll + commandpitch - commandyaw);
 		} else {
 			motor1 = 62;
 			motor2 = 62;
