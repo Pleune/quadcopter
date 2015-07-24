@@ -26,7 +26,7 @@ compile: $(_OBJS)
 	avr-objcopy -O ihex $(BUILDDIR)arduino $(OUTPUTDIR)arduino.hex
 
 install:
-	avrdude -c arduino -p atmega328p -P /dev/serial/by-id/* -b 115200 -U flash:w:$(OUTPUTDIR)arduino.hex
+	avrdude -c arduino -p atmega328p -P /dev/serial/by-id/* -b 57600 -U flash:w:$(OUTPUTDIR)arduino.hex
 	stty -F /dev/serial/by-id/* cs8 57600 raw
 
 .PHONY: clean

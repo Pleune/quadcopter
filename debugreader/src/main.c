@@ -103,6 +103,11 @@ int main(void)
 	SPITransmit(0x2F);
 	NRFStop();
 
+	NRFStart();
+	SPITransmit(0x25);
+	SPITransmit(0x0F);
+	NRFStop();
+
 	/* pipe 1 RX address */
 	NRFStart();
 	SPITransmit(0x2A);

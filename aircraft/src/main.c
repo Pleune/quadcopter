@@ -44,7 +44,9 @@
 #define LED4ON() (PORTB |= 0x10)
 #define LED4OFF() (PORTB &= 0xEF)
 
-int enabled = 1;
+int enabled = 0;
+
+int throttle = 62;
 
 uint8_t motor1 = 62;
 uint8_t motor2 = 62;
@@ -342,6 +344,11 @@ void msg(char *s)
 	SPITransmit(0x0E);
 	NRFStop();
 
+	NRFStart();
+	SPITransmit(0x25);
+	SPITransmit(0x0F);
+	NRFStop();
+
 	NRFCEHIGH();
 
 	_delay_us(80);
@@ -382,6 +389,12 @@ void msg(char *s)
 	SPITransmit(0x20);
 	SPITransmit(0x0F);
 	NRFStop();
+
+	NRFStart();
+	SPITransmit(0x25);
+	SPITransmit(0x02);
+	NRFStop();
+
 
 	NRFCEHIGH();
 
@@ -715,7 +728,39 @@ int main(void)
 			qd3 = -q0*qt3 - q1*qt2 + q2*qt1 + q3*qt0;
 		}
 
-		if(enabled)
+		/**
+		 * ask the nrf for a RXx packet,
+		 * meanwhile it shifts out the status register.
+		 *
+		 * if the status reg says there is a packet, it will be shifted out next.
+		 */
+		NRFStart();
+		unsigned char status = SPITransmit(0x61);
+
+		if(status & 0x40)
+		{
+			/* just to generate the clock */
+			unsigned char data = SPITransmit(0x00);
+
+			throttle = data;
+
+			NRFStop();
+
+			NRFStart();
+			SPITransmit(0x27);
+			SPITransmit(0x40);
+			NRFStop();
+		} else {
+			NRFStop();
+		}
+
+		if(flags&0x20)
+		{
+			mpu6050Calibrate();
+			flags &= 0xDF;
+		}
+
+		if(throttle > 62)
 		{
 			double commandpitch;
 			double commandroll;
@@ -750,11 +795,21 @@ int main(void)
 			static double lastinputpitch = 0;
 			static double lastinputyaw = 0;
 
-			qd1 = 0;
-			qd2 = 0;
-			qd3 = 0;
+			qd1 *= 0.0;
+			qd2 *= 0.0;
+			qd3 *= 0.0;
 
-			error = qd1 - gx_;
+			static double qd1_s = 0;
+			static double qd2_s = 0;
+			static double qd3_s = 0;
+
+			double qd_sweight = .6;
+
+			qd1_s = qd1_s * (1.0 - qd_sweight) + qd1 * (qd_sweight);
+			qd2_s = qd2_s * (1.0 - qd_sweight) + qd2 * (qd_sweight);
+			qd3_s = qd3_s * (1.0 - qd_sweight) + qd3 * (qd_sweight);
+
+			error = qd1_s - gx_;
 			dInput = gx_s - lastinputroll;
 			iTermroll += kIroll * dT_ * error;
 			if(iTermroll > iMaxroll)
@@ -768,7 +823,7 @@ int main(void)
 				commandroll = mincommandroll;
 			lastinputroll = gx_s;
 
-			error = qd2 - gy_;
+			error = qd2_s - gy_;
 			dInput = gy_s - lastinputpitch;
 			iTermpitch += kIpitch * dT_ * error;
 			if(iTermpitch > iMaxpitch)
@@ -782,7 +837,7 @@ int main(void)
 				commandpitch = mincommandpitch;
 			lastinputpitch = gy_s;
 
-			error = qd3 - gz_;
+			error = qd3_s - gz_;
 			dInput = gz_s - lastinputyaw;
 			iTermyaw += kIyaw * dT_ * error;
 			if(iTermyaw > iMaxyaw)
@@ -800,63 +855,49 @@ int main(void)
 		{
 			p = 0;
 			char string[64];
-			sprintf(string, "1: %f\t2: %f\t3: %f\t4: %f\n", commandroll, commandpitch, commandyaw, weight);
+			sprintf(string, "1: %f\t2: %f\t3: %f\t4: %i\n", commandroll, commandpitch, commandyaw, throttle);
 			msg(string);
 		}
 
-			motor1 = (int)(85 + commandroll - commandpitch + commandyaw);
-			motor2 = (int)(85 - commandroll - commandpitch - commandyaw);
-			motor3 = (int)(85 - commandroll + commandpitch + commandyaw);
-			motor4 = (int)(85 + commandroll + commandpitch - commandyaw);
+			motor1 = (int)(throttle + commandroll - commandpitch + commandyaw);
+			motor2 = (int)(throttle - commandroll - commandpitch - commandyaw);
+			motor3 = (int)(throttle - commandroll + commandpitch + commandyaw);
+			motor4 = (int)(throttle + commandroll + commandpitch - commandyaw);
+
+			if(motor1 > 125)
+				motor1 = 125;
+			else if(motor1 < 62)
+				motor1 = 62;
+			if(motor2 > 125)
+				motor2 = 125;
+			else if(motor2 < 62)
+				motor2 = 62;
+			if(motor3 > 125)
+				motor3 = 125;
+			else if(motor3 < 62)
+				motor3 = 62;
+			if(motor4 > 125)
+				motor4 = 125;
+			else if(motor4 < 62)
+				motor4 = 62;
 		} else {
 			motor1 = 62;
 			motor2 = 62;
 			motor3 = 62;
 			motor4 = 62;
+
+		if(p++ == 200)
+		{
+			p = 0;
+			char string[64];
+			sprintf(string, "1: %i\n", throttle);
+			msg(string);
+		}
 		}
 
 		lastgx = gx;
 		lastgy = gy;
 		lastgz = gz;
-
-		/**
-		 * ask the nrf for a RXx packet,
-		 * meanwhile it shifts out the status register.
-		 *
-		 * if the status reg says there is a packet, it will be shifted out next.
-		 */
-		//NRFStart();
-		//unsigned char status = SPITransmit(0x61);
-
-		//if(status & 0x40)
-		//{
-		//	static lastrx = 0;
-
-		//	char string[10];
-		//	sprintf(string, "%i\n", clock-lastrx);
-
-			/* just to generate the clock */
-		//	unsigned char data = SPITransmit(0x00);
-
-		//	NRFStop();
-
-		//	NRFStart();
-		//	SPITransmit(0x27);
-		//	SPITransmit(0x40);
-		//	NRFStop();
-
-		//	lastrx = clock;
-
-		//	LED1OFF();
-		//} else {
-		//	NRFStop();
-		//}
-
-		if(flags&0x20)
-		{
-			mpu6050Calibrate();
-			flags &= 0xDF;
-		}
 	}
 }
 

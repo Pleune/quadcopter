@@ -35,6 +35,8 @@
 #define NRFCEHIGH() (PORTB |= 0x01)
 #define NRFCELOW() (PORTB &= 0xFE)
 
+uint8_t throttle = 62;
+
 void writechar( unsigned char data )
 {
 	/* Wait for empty transmit buffer */
@@ -121,7 +123,7 @@ int main(void)
 	/* Enable pipe 1, 1 byte */
 	NRFStart();
 	SPITransmit(0x31);
-	SPITransmit(0x01);
+	SPITransmit(1);
 	NRFStop();
 
 	/* turn off ShockBurst autoACK shit */
@@ -157,26 +159,16 @@ int main(void)
 		lastclock = clock;
 
 		NRFStart();
-
-		SPITransmit(0xA0);
-		char status = SPDR;
-
-		SPITransmit(0x1A);
+		SPITransmit(0xE1);
 		NRFStop();
 
-		//writechar(status & 0b10000000 ? '1' : '0');
-		//writechar(status & 0b01000000 ? '1' : '0');
-		//writechar(status & 0b00100000 ? '1' : '0');
-		//writechar(status & 0b00010000 ? '1' : '0');
-		//writechar(status & 0b00001000 ? '1' : '0');
-		//writechar(status & 0b00000100 ? '1' : '0');
-		//writechar(status & 0b00000010 ? '1' : '0');
-		//writechar(status & 0b00000001 ? '1' : '0');
+		NRFStart();
+		SPITransmit(0xA0);
+		SPITransmit(throttle);
+		NRFStop();
 
-		//writechar('\n');
+		_delay_ms(1);
 	}
-
-	_delay_ms(1);
 }
 
 /**
@@ -207,10 +199,10 @@ ISR(USART_RX_vect)
 			packetbuffer[packetcounter]=0;
 			switch(packettype)
 			{
-				/**
-				 * this is the code that gets exxectued after the entire packet
-				 * is received, based on the first charcter of the packet
-				 */
+				case 't':
+					throttle = atoi(packetbuffer);
+					writestring(packetbuffer);
+					break;
 			default:
 				break;
 			}
