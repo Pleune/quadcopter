@@ -100,15 +100,6 @@ int main(void)
 	UCSR0C = (1 << UCSZ01) | (3 << UCSZ00);// | (1 << UPM01);
 
 	/**
-	 * Timer 1, 16 bit
-	 * enable by setting prescaler only.
-	 * everything else left normal (counter only)
-	 *
-	 * A prescalar of 256 overflows almost exactly once a seccond at 16Mhz
-	 */
-	TCCR1B = 0x03;//64
-
-	/**
 	 * Init NRF
 	 */
 	/* Enable SPI, Master, set clock rate fck/16 */
@@ -141,22 +132,29 @@ int main(void)
 	/* actually power up */
 	NRFCEHIGH();
 
-	uint16_t lastclock = TCNT1;//16-bit read handled by compiler
 	while(1)
 	{
-		uint16_t clock;
-		uint16_t dt;
+		uint8_t a0, a1, a2, a3;
+		ADMUX = 0x60;
+		ADCSRA = 0xC6;
+		while(ADCSRA & 0x40);
+		a0 = ADCH;
+		ADMUX = 0x61;
+		ADCSRA = 0xC6;
+		while(ADCSRA & 0x40);
+		a1 = ADCH;
+		ADMUX = 0x62;
+		ADCSRA = 0xC6;
+		while(ADCSRA & 0x40);
+		a2 = ADCH;
+		ADMUX = 0x63;
+		ADCSRA = 0xC6;
+		while(ADCSRA & 0x40);
+		a3 = ADCH;
 
-		clock = TCNT1;
-
-		/**
-		 * Calculate deltaT here,
-		 * and reset it for next loop.
-		 *
-		 * deltaT is calculated based on the 16-bit timer0, which effectly counts clock cycles.
-		 */
-		dt = clock - lastclock;
-		lastclock = clock;
+		char string[32];
+		sprintf(string, "0:%i\t1:%i\t2:%i\t3:%i\n", a0, a1, a2, a3);
+		writestring(string);
 
 		NRFStart();
 		SPITransmit(0xE1);
@@ -164,7 +162,7 @@ int main(void)
 
 		NRFStart();
 		SPITransmit(0xA0);
-		SPITransmit(throttle);
+		SPITransmit(a1);
 		NRFStop();
 
 		_delay_ms(1);
@@ -199,9 +197,6 @@ ISR(USART_RX_vect)
 			packetbuffer[packetcounter]=0;
 			switch(packettype)
 			{
-				case 't':
-					throttle = atoi(packetbuffer);
-					writestring(packetbuffer);
 					break;
 			default:
 				break;
