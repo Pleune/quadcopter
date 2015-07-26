@@ -1,17 +1,7 @@
-/**
- * INPUT TO ARDUINO OVER SERIAL
- * ****************************
- *
- * send "pc\n" to re calibrate the gyros
- *
- * send "pr\n" to reset the quaternion to (1,0,0,0)
- *
- * send "p\n" to do both
- */
-
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <avr/sleep.h>
+#include <avr/eeprom.h>
 
 #include <util/delay.h>
 #include <stdlib.h>
@@ -35,7 +25,25 @@
 #define NRFCEHIGH() (PORTB |= 0x01)
 #define NRFCELOW() (PORTB &= 0xFE)
 
+char string[64];
+
 uint8_t throttle = 62;
+
+uint8_t calibrate = 0;
+
+#define a0min calibrations[0]
+#define a0max calibrations[1]
+#define a0mid calibrations[2]
+#define a1min calibrations[3]
+#define a1max calibrations[4]
+#define a1mid calibrations[5]
+#define a2min calibrations[6]
+#define a2max calibrations[7]
+#define a2mid calibrations[8]
+#define a3min calibrations[9]
+#define a3max calibrations[10]
+#define a3mid calibrations[11]
+uint8_t calibrations[12];
 
 void writechar( unsigned char data )
 {
@@ -132,9 +140,18 @@ int main(void)
 	/* actually power up */
 	NRFCEHIGH();
 
+	eeprom_read_block(calibrations, 0x00, sizeof(calibrations));
+
+	sprintf(string, "a0:%i:%i:%i\na1:%i:%i:%i\na2:%i:%i:%i\na3:%i:%i:%i\n", a0min, a0max, a0mid,
+			a1min, a1max, a1mid,
+			a2min, a2max, a2mid,
+			a3min, a3max, a3mid);
+	writestring(string);
+
 	while(1)
 	{
 		uint8_t a0, a1, a2, a3;
+		static uint8_t calibrating = 0;
 		ADMUX = 0x60;
 		ADCSRA = 0xC6;
 		while(ADCSRA & 0x40);
@@ -152,20 +169,58 @@ int main(void)
 		while(ADCSRA & 0x40);
 		a3 = ADCH;
 
-		char string[32];
 		sprintf(string, "0:%i\t1:%i\t2:%i\t3:%i\n", a0, a1, a2, a3);
-		writestring(string);
+		//writestring(string);
 
-		NRFStart();
-		SPITransmit(0xE1);
-		NRFStop();
+		if(calibrating)
+		{
+			a0min = a0 < a0min ? a0 : a0min;
+			a1min = a1 < a1min ? a1 : a1min;
+			a2min = a2 < a2min ? a2 : a2min;
+			a3min = a3 < a3min ? a3 : a3min;
 
-		NRFStart();
-		SPITransmit(0xA0);
-		SPITransmit(a1);
-		NRFStop();
+			a0max = a0 > a0max ? a0 : a0max;
+			a1max = a1 > a1max ? a1 : a1max;
+			a2max = a2 > a2max ? a2 : a2max;
+			a3max = a3 > a3max ? a3 : a3max;
 
-		_delay_ms(1);
+			if(!calibrate)
+			{
+				calibrating = calibrate;
+				eeprom_update_block(calibrations, 0x00, sizeof(calibrations));
+			}
+		} else {
+			if(calibrate)
+			{
+				calibrating = 1;
+
+				a0mid = a0;
+				a1mid = a1;
+				a2mid = a2;
+				a3mid = a3;
+
+				a0max = 0;
+				a0min = 255;
+				a1max = 0;
+				a1min = 255;
+				a2max = 0;
+				a2min = 255;
+				a3max = 0;
+				a3min = 255;
+			}
+
+			NRFStart();
+			SPITransmit(0xE1);
+			NRFStop();
+
+			NRFStart();
+			SPITransmit(0xA0);
+			SPITransmit(a1);
+			NRFStop();
+
+			_delay_ms(1);
+
+		}
 	}
 }
 
@@ -197,6 +252,11 @@ ISR(USART_RX_vect)
 			packetbuffer[packetcounter]=0;
 			switch(packettype)
 			{
+				case 'c':
+					if(packetbuffer[0] == 's')
+						calibrate = 1;
+					else if(packetbuffer[0] == 'c')
+						calibrate = 0;
 					break;
 			default:
 				break;
