@@ -83,6 +83,12 @@ double mincommandyaw = -25;
 
 double smoothness = 10;
 
+//target orientation
+double qt0 = 1.0;
+double qt1 = 0.0;
+double qt2 = 0.0;
+double qt3 = 0.0;
+
 /**
  * These are the values read from the IMU.
  * The z_ values are zero-state correction values.
@@ -298,10 +304,10 @@ void NRFInit()
 	SPITransmit(0x0F);
 	NRFStop();
 
-	/* Enable pipe 1, 1 byte */
+	/* Enable pipe 1 */
 	NRFStart();
 	SPITransmit(0x31);
-	SPITransmit(0x01);
+	SPITransmit(17);
 	NRFStop();
 
 	/* turn off ShockBurst autoACK shit */
@@ -693,40 +699,6 @@ int main(void)
 			q3 /= mag;
 		}
 #endif
-		/**
-		 * http://arxiv.org/pdf/0811.2889.pdf
-		 */
-		//double qd0;
-		double qd1;
-		double qd2;
-		double qd3;
-
-		//target orientation
-		double qt0 = 1.0;
-		double qt1 = 0.0;
-		double qt2 = 0.0;
-		double qt3 = 0.0;
-
-		if(qt0*q0 + qt1*q1 + qt2*q2 + qt3*q3 > 0)
-		{
-			qt0 -= q0;
-			qt1 -= q1;
-			qt2 -= q2;
-			qt3 -= q3;
-			//qd0 = q0*qt0 + q1*qt1 + q2*qt2 + q3*qt3;
-			qd1 = q0*qt1 - q1*qt0 + q2*qt3 - q3*qt2;
-			qd2 = q0*qt2 - q1*qt3 - q2*qt0 + q3*qt1;
-			qd3 = q0*qt3 + q1*qt2 - q2*qt1 - q3*qt0;
-		} else {
-			qt0 -= q0;
-			qt1 -= q1;
-			qt2 -= q2;
-			qt3 -= q3;
-			//qd0 = -q0*qt0 - q1*qt1 - q2*qt2 - q3*qt3;
-			qd1 = -q0*qt1 + q1*qt0 - q2*qt3 + q3*qt2;
-			qd2 = -q0*qt2 + q1*qt3 + q2*qt0 - q3*qt1;
-			qd3 = -q0*qt3 - q1*qt2 + q2*qt1 + q3*qt0;
-		}
 
 
 #define Kdt ((double)64.0 / (double)F_CPU)
@@ -748,7 +720,35 @@ int main(void)
 			/* just to generate the clock */
 			unsigned char data = SPITransmit(0x00);
 
-			throttle = data;
+			if(data == 0xAA)
+			{
+				throttle = SPITransmit(0x00);
+
+				char build[4];
+				build[0] = SPITransmit(0x00);
+				build[1] = SPITransmit(0x00);
+				build[2] = SPITransmit(0x00);
+				build[3] = SPITransmit(0x00);
+				qt0 = *((double *)build);
+
+				build[0] = SPITransmit(0x00);
+				build[1] = SPITransmit(0x00);
+				build[2] = SPITransmit(0x00);
+				build[3] = SPITransmit(0x00);
+				qt1 = *((double *)build);
+
+				build[0] = SPITransmit(0x00);
+				build[1] = SPITransmit(0x00);
+				build[2] = SPITransmit(0x00);
+				build[3] = SPITransmit(0x00);
+				qt2 = *((double *)build);
+
+				build[0] = SPITransmit(0x00);
+				build[1] = SPITransmit(0x00);
+				build[2] = SPITransmit(0x00);
+				build[3] = SPITransmit(0x00);
+				qt3 = *((double *)build);
+			}
 
 			NRFStop();
 
@@ -764,6 +764,34 @@ int main(void)
 				throttle = 62;
 
 			NRFStop();
+		}
+		/**
+		 * http://arxiv.org/pdf/0811.2889.pdf
+		 */
+		//double qd0;
+		double qd1;
+		double qd2;
+		double qd3;
+
+		if(qt0*q0 + qt1*q1 + qt2*q2 + qt3*q3 > 0)
+		{
+			qt0 -= q0;
+			qt1 -= q1;
+			qt2 -= q2;
+			qt3 -= q3;
+			//qd0 = q0*qt0 + q1*qt1 + q2*qt2 + q3*qt3;
+			qd1 = q0*qt1 - q1*qt0 + q2*qt3 - q3*qt2;
+			qd2 = q0*qt2 - q1*qt3 - q2*qt0 + q3*qt1;
+			qd3 = q0*qt3 + q1*qt2 - q2*qt1 - q3*qt0;
+		} else {
+			qt0 -= q0;
+			qt1 -= q1;
+			qt2 -= q2;
+			qt3 -= q3;
+			//qd0 = -q0*qt0 - q1*qt1 - q2*qt2 - q3*qt3;
+			qd1 = -q0*qt1 + q1*qt0 - q2*qt3 + q3*qt2;
+			qd2 = -q0*qt2 + q1*qt3 + q2*qt0 - q3*qt1;
+			qd3 = -q0*qt3 - q1*qt2 + q2*qt1 + q3*qt0;
 		}
 
 		if(flags&0x20)

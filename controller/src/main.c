@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 
 /**
  * Serial baud and calculator
@@ -124,10 +125,10 @@ int main(void)
 	SPITransmit(0x0E);
 	NRFStop();
 
-	/* Enable pipe 1, 1 byte */
+	/* Enable pipe 1 */
 	NRFStart();
 	SPITransmit(0x31);
-	SPITransmit(1);
+	SPITransmit(17);
 	NRFStop();
 
 	/* turn off ShockBurst autoACK shit */
@@ -154,10 +155,10 @@ int main(void)
 	writestring(string);
 
 	/* actually a coefficent derrived from range */
-	range0 = 1024.0 / (double)(a0max - a0min);
+	range0 = 1.0 / (double)(a0max - a0min);
 	range1 = 63.0 / (double)(a1max - a1mid);
-	range2 = 1024.0 / (double)(a2max - a2min);
-	range3 = 1024.0 / (double)(a3max - a3min);
+	range2 = 1.0 / (double)(a2max - a2min);
+	range3 = 1.0 / (double)(a3max - a3min);
 
 	while(1)
 	{
@@ -202,10 +203,10 @@ int main(void)
 				calibrating = calibrate;
 				eeprom_update_block(calibrations, 0x00, sizeof(calibrations));
 
-				range0 = 1024.0 / (double)(a0max - a0min);
+				range0 = 1.0 / (double)(a0max - a0min);
 				range1 = 63.0 / (double)(a1max - a1mid);
-				range2 = 1024.0 / (double)(a2max - a2min);
-				range3 = 1024.0 / (double)(a3max - a3min);
+				range2 = 1.0 / (double)(a2max - a2min);
+				range3 = 1.0 / (double)(a3max - a3min);
 			}
 		} else {
 			if(calibrate)
@@ -222,10 +223,25 @@ int main(void)
 				a3min = 255;
 			}
 
-			a0 = (a0 - a0mid) * range0;
-			a1 = a1 < a1mid ? 62 : (a1 - a1mid) * range1 + 62;
-			a2 = (a2 - a2mid) * range2;
-			a3 = (a3 - a3mid) * range3;
+			double z = (double)(a0 - a0mid) * range0;
+			uint8_t throttle = a1 < a1mid ? 62 : (a1 - a1mid) * range1 + 62;
+			double x = (double)(a2 - a2mid) * range2;
+			double y = (double)(a3 - a3mid) * range3;
+
+			int16_t axisx = -y;
+			int16_t axisy = x;
+			//axisz = 0;
+
+			double angle = sqrt(y*y + x*x);
+			double sinfix = sin(angle);
+
+			double q0 = cos(angle);
+			double q1 = axisx * sinfix;
+			double q2 = axisy * sinfix;
+			double q3 = 0;
+
+			sprintf(string, "0:%f\t1:%f\t2:%f\t3:%f\n", q0, q1, q2, q3);
+			writestring(string);
 
 			NRFStart();
 			SPITransmit(0xE1);
@@ -233,15 +249,35 @@ int main(void)
 
 			NRFStart();
 			SPITransmit(0xA0);
-			SPITransmit(a1);
+			SPITransmit(0xAA);//just to check on the other side
+
+			SPITransmit(throttle);
+
+			SPITransmit(((char *)&q0)[0]);
+			SPITransmit(((char *)&q0)[1]);
+			SPITransmit(((char *)&q0)[2]);
+			SPITransmit(((char *)&q0)[3]);
+
+			SPITransmit(((char *)&q1)[0]);
+			SPITransmit(((char *)&q1)[1]);
+			SPITransmit(((char *)&q1)[2]);
+			SPITransmit(((char *)&q1)[3]);
+
+			SPITransmit(((char *)&q2)[0]);
+			SPITransmit(((char *)&q2)[1]);
+			SPITransmit(((char *)&q2)[2]);
+			SPITransmit(((char *)&q2)[3]);
+
+			SPITransmit(((char *)&q3)[0]);
+			SPITransmit(((char *)&q3)[1]);
+			SPITransmit(((char *)&q3)[2]);
+			SPITransmit(((char *)&q3)[3]);
+
 			NRFStop();
 
 			_delay_ms(1);
 
 		}
-
-			sprintf(string, "0:%i\t1:%i\t2:%i\t3:%i\n", a0, a1, a2, a3);
-			writestring(string);
 	}
 }
 
