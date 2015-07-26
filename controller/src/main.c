@@ -25,6 +25,9 @@
 #define NRFCEHIGH() (PORTB |= 0x01)
 #define NRFCELOW() (PORTB &= 0xFE)
 
+uint16_t throttlepoint = 100;
+uint8_t inv0 = 0, inv1 = 0, inv2 = 0, inv3 = 1;
+
 char string[64];
 
 uint8_t throttle = 62;
@@ -82,6 +85,8 @@ void NRFStop()
 
 int main(void)
 {
+	double range0, range1, range2, range3;
+
 	DDRB = 0xFF;
 	PORTB = 0xFE;//keep CE on NRF low
 
@@ -148,29 +153,32 @@ int main(void)
 			a3min, a3max, a3mid);
 	writestring(string);
 
+	/* actually a coefficent derrived from range */
+	range0 = 1024.0 / (double)(a0max - a0min);
+	range1 = 63.0 / (double)(a1max - a1mid);
+	range2 = 1024.0 / (double)(a2max - a2min);
+	range3 = 1024.0 / (double)(a3max - a3min);
+
 	while(1)
 	{
-		uint8_t a0, a1, a2, a3;
+		int16_t a0, a1, a2, a3;
 		static uint8_t calibrating = 0;
 		ADMUX = 0x60;
 		ADCSRA = 0xC6;
 		while(ADCSRA & 0x40);
-		a0 = ADCH;
+		a0 = inv0 ? 255-ADCH : ADCH;
 		ADMUX = 0x61;
 		ADCSRA = 0xC6;
 		while(ADCSRA & 0x40);
-		a1 = ADCH;
+		a1 = inv1 ? 255-ADCH : ADCH;
 		ADMUX = 0x62;
 		ADCSRA = 0xC6;
 		while(ADCSRA & 0x40);
-		a2 = ADCH;
+		a2 = inv2 ? 255-ADCH: ADCH;
 		ADMUX = 0x63;
 		ADCSRA = 0xC6;
 		while(ADCSRA & 0x40);
-		a3 = ADCH;
-
-		sprintf(string, "0:%i\t1:%i\t2:%i\t3:%i\n", a0, a1, a2, a3);
-		//writestring(string);
+		a3 = inv3 ? 255-ADCH : ADCH;
 
 		if(calibrating)
 		{
@@ -186,18 +194,23 @@ int main(void)
 
 			if(!calibrate)
 			{
+				a0mid = a0;
+				a1mid = a1;
+				a2mid = a2;
+				a3mid = a3;
+
 				calibrating = calibrate;
 				eeprom_update_block(calibrations, 0x00, sizeof(calibrations));
+
+				range0 = 1024.0 / (double)(a0max - a0min);
+				range1 = 63.0 / (double)(a1max - a1mid);
+				range2 = 1024.0 / (double)(a2max - a2min);
+				range3 = 1024.0 / (double)(a3max - a3min);
 			}
 		} else {
 			if(calibrate)
 			{
 				calibrating = 1;
-
-				a0mid = a0;
-				a1mid = a1;
-				a2mid = a2;
-				a3mid = a3;
 
 				a0max = 0;
 				a0min = 255;
@@ -208,6 +221,11 @@ int main(void)
 				a3max = 0;
 				a3min = 255;
 			}
+
+			a0 = (a0 - a0mid) * range0;
+			a1 = a1 < a1mid ? 62 : (a1 - a1mid) * range1 + 62;
+			a2 = (a2 - a2mid) * range2;
+			a3 = (a3 - a3mid) * range3;
 
 			NRFStart();
 			SPITransmit(0xE1);
@@ -221,6 +239,9 @@ int main(void)
 			_delay_ms(1);
 
 		}
+
+			sprintf(string, "0:%i\t1:%i\t2:%i\t3:%i\n", a0, a1, a2, a3);
+			writestring(string);
 	}
 }
 
