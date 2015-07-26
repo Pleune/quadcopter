@@ -27,7 +27,7 @@
 #define NRFCELOW() (PORTB &= 0xFE)
 
 uint16_t throttlepoint = 100;
-uint8_t inv0 = 0, inv1 = 0, inv2 = 0, inv3 = 1;
+uint8_t inv0 = 0, inv1 = 0, inv2 = 0, inv3 = 0;
 
 char string[64];
 
@@ -128,7 +128,7 @@ int main(void)
 	/* Enable pipe 1 */
 	NRFStart();
 	SPITransmit(0x31);
-	SPITransmit(17);
+	SPITransmit(18);
 	NRFStop();
 
 	/* turn off ShockBurst autoACK shit */
@@ -228,16 +228,16 @@ int main(void)
 			double x = (double)(a2 - a2mid) * range2;
 			double y = (double)(a3 - a3mid) * range3;
 
-			int16_t axisx = -y;
-			int16_t axisy = x;
+			//int16_t axisx = -y;
+			//int16_t axisy = x;
 			//axisz = 0;
 
-			double angle = sqrt(y*y + x*x);
+			double angle = sqrt(y*y + x*x) * 3.0;
 			double sinfix = sin(angle);
 
 			double q0 = cos(angle);
-			double q1 = axisx * sinfix;
-			double q2 = axisy * sinfix;
+			double q1 = -y * sinfix;
+			double q2 = x * sinfix;
 			double q3 = 0;
 
 			sprintf(string, "0:%f\t1:%f\t2:%f\t3:%f\n", q0, q1, q2, q3);
@@ -249,6 +249,7 @@ int main(void)
 
 			NRFStart();
 			SPITransmit(0xA0);
+
 			SPITransmit(0xAA);//just to check on the other side
 
 			SPITransmit(throttle);

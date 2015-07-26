@@ -54,15 +54,15 @@ uint8_t motor3 = 62;
 uint8_t motor4 = 62;
 
 double kProll = 5.0;
-double kIroll = 3.0;
+double kIroll = 1.0;
 double kDroll = 0.3;
 
 double kPpitch = 5.0;
-double kIpitch = 3.0;
+double kIpitch = 1.0;
 double kDpitch = 0.3;
 
 double kPyaw = 5.0;
-double kIyaw = 10.0;
+double kIyaw = 1.0;
 double kDyaw = 0.05;
 
 double iMaxroll = 20;
@@ -307,7 +307,7 @@ void NRFInit()
 	/* Enable pipe 1 */
 	NRFStart();
 	SPITransmit(0x31);
-	SPITransmit(17);
+	SPITransmit(18);
 	NRFStop();
 
 	/* turn off ShockBurst autoACK shit */
@@ -765,6 +765,7 @@ int main(void)
 
 			NRFStop();
 		}
+
 		/**
 		 * http://arxiv.org/pdf/0811.2889.pdf
 		 */
@@ -773,25 +774,27 @@ int main(void)
 		double qd2;
 		double qd3;
 
+		double qt0_, qt1_, qt2_, qt3_;
+
 		if(qt0*q0 + qt1*q1 + qt2*q2 + qt3*q3 > 0)
 		{
-			qt0 -= q0;
-			qt1 -= q1;
-			qt2 -= q2;
-			qt3 -= q3;
+			qt0_ = qt0 - q0;
+			qt1_ = qt1 - q1;
+			qt2_ = qt2 - q2;
+			qt3_ = qt3 - q3;
 			//qd0 = q0*qt0 + q1*qt1 + q2*qt2 + q3*qt3;
-			qd1 = q0*qt1 - q1*qt0 + q2*qt3 - q3*qt2;
-			qd2 = q0*qt2 - q1*qt3 - q2*qt0 + q3*qt1;
-			qd3 = q0*qt3 + q1*qt2 - q2*qt1 - q3*qt0;
+			qd1 = q0*qt1_ - q1*qt0_ + q2*qt3_ - q3*qt2_;
+			qd2 = q0*qt2_ - q1*qt3_ - q2*qt0_ + q3*qt1_;
+			qd3 = q0*qt3_ + q1*qt2_ - q2*qt1_ - q3*qt0_;
 		} else {
-			qt0 -= q0;
-			qt1 -= q1;
-			qt2 -= q2;
-			qt3 -= q3;
+			qt0_ = qt0 - q0;
+			qt1_ = qt1 - q1;
+			qt2_ = qt2 - q2;
+			qt3_ = qt3 - q3;
 			//qd0 = -q0*qt0 - q1*qt1 - q2*qt2 - q3*qt3;
-			qd1 = -q0*qt1 + q1*qt0 - q2*qt3 + q3*qt2;
-			qd2 = -q0*qt2 + q1*qt3 + q2*qt0 - q3*qt1;
-			qd3 = -q0*qt3 - q1*qt2 + q2*qt1 + q3*qt0;
+			qd1 = -q0*qt1_ + q1*qt0_ - q2*qt3_ + q3*qt2_;
+			qd2 = -q0*qt2_ + q1*qt3_ + q2*qt0_ - q3*qt1_;
+			qd3 = -q0*qt3_ - q1*qt2_ + q2*qt1_ + q3*qt0_;
 		}
 
 		if(flags&0x20)
@@ -891,7 +894,7 @@ int main(void)
 		{
 			p = 0;
 			char string[64];
-			sprintf(string, "1: %f\t2: %f\t3: %f\t4: %i\n", commandroll, commandpitch, commandyaw, throttle);
+			sprintf(string, "1: %f\t2: %f\t3: %f\t4: %f\t%i\n", qd1, qd2, qd3, 0.0, throttle);
 			msg(string);
 		}
 
