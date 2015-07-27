@@ -49,6 +49,8 @@ uint8_t calibrate = 0;
 #define a3mid calibrations[11]
 uint8_t calibrations[12];
 
+uint8_t blink = 0;
+
 void writechar( unsigned char data )
 {
 	/* Wait for empty transmit buffer */
@@ -113,6 +115,11 @@ int main(void)
 	UCSR0B = (1 << TXEN0) | (1 << RXEN0) | (1 << RXCIE0);
 	UCSR0C = (1 << UCSZ01) | (3 << UCSZ00);// | (1 << UPM01);
 
+	/* 16-bit timer 1 */
+	TCCR1B = 0x0C;//4 per seccond, ctc mode
+	TIMSK1 = 0x02;//interrupt on match a
+	OCR1A = 20000;
+
 	/**
 	 * Init NRF
 	 */
@@ -162,6 +169,8 @@ int main(void)
 
 	while(1)
 	{
+		static uint16_t p = 0;
+
 		int16_t a0, a1, a2, a3;
 		static uint8_t calibrating = 0;
 		ADMUX = 0x60;
@@ -193,6 +202,12 @@ int main(void)
 			a2max = a2 > a2max ? a2 : a2max;
 			a3max = a3 > a3max ? a3 : a3max;
 
+			if(p++ == 100)
+			{
+				p = 0;
+				writestring("calibrating\n");
+			}
+
 			if(!calibrate)
 			{
 				a0mid = a0;
@@ -223,25 +238,56 @@ int main(void)
 				a3min = 255;
 			}
 
+			static int enabled = 0;
+
 			double z = (double)(a0 - a0mid) * range0;
 			uint8_t throttle = a1 < a1mid ? 62 : (a1 - a1mid) * range1 + 62;
 			double x = (double)(a2 - a2mid) * range2;
 			double y = (double)(a3 - a3mid) * range3;
 
-			//int16_t axisx = -y;
-			//int16_t axisy = x;
-			//axisz = 0;
+			double q0;
+			double q1;
+			double q2;
+			double q3;
 
-			double angle = sqrt(y*y + x*x) * 3.0;
-			double sinfix = sin(angle);
+			if(enabled)
+			{
+				double angle = sqrt(y*y + x*x) * 3.0;
+				double sinfix = sin(angle);
 
-			double q0 = cos(angle);
-			double q1 = -y * sinfix;
-			double q2 = x * sinfix;
-			double q3 = 0;
+				q0 = cos(angle);
+				q1 = -y * sinfix;
+				q2 = x * sinfix;
+				q3 = 0;
 
-			sprintf(string, "0:%f\t1:%f\t2:%f\t3:%f\n", q0, q1, q2, q3);
-			writestring(string);
+				if((a1 < a1mid) && a3 > a3max - 8 && a2 < a2min + 8)
+				{
+					blink = 0x00;
+					PORTB |= 0x02;
+					enabled = 0;
+				}
+			} else {
+
+				q0 = 1;
+				q1 = 0;
+				q2 = 0;
+				q3 = 0;
+
+				throttle = 62;
+
+				if((a1 < a1mid) && a3 < a3min + 8 && a2 < a2min + 8)
+				{
+					blink = 0xFF;
+					enabled = 1;
+				}
+			}
+
+			if(p++ == 200)
+			{
+				p = 0;
+				sprintf(string, "0:%f\t1:%f\t2:%f\t3:%f\n", q0, q1, q2, q3);
+				writestring(string);
+			}
 
 			NRFStart();
 			SPITransmit(0xE1);
@@ -322,4 +368,9 @@ ISR(USART_RX_vect)
 			newpacket=1;
 		}
 	}
+}
+
+ISR(TIMER1_COMPA_vect)
+{
+	PORTB ^= 0x02 & blink;
 }
