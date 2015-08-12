@@ -51,13 +51,13 @@ typedef struct {
 } gains_t;
 
 gains_t pitchrollgains = {
-	3.0, 0.0, 0.1,
+	3.0, 0.0, 0.0,
 	10.0, -10.0,
 	20.0, -20.0
 };
 
 gains_t yawgains = {
-	5.0, 0.0, 0.05,
+	5.0, 0.0, 0.0,
 	20.0, -20.0,
 	20.0, -20.0
 };
@@ -583,6 +583,25 @@ void recievepacket(double dt)
 	}
 }
 
+double pid(double setpoint, double input, double *i, double *lastinput, double dt, const gains_t *gains)
+{
+	double error = setpoint - input;
+	double dInput = input - *lastinput;
+	*i += gains->kI * dt * error;
+	if(*i > gains->iMax)
+		*i = gains->iMax;
+	else if(*i < gains->iMin)
+		*i = gains->iMin;
+	double command = gains->kP * error + *i - gains->kD * dInput / dt;
+	if(command > gains->max)
+		command = gains->max;
+	else if(command < gains->min)
+		command = gains->min;
+	*lastinput = input;
+
+	return command;
+}
+
 void calculaterates()
 {
 	double qt0_ = qt0 - q0;
@@ -608,92 +627,47 @@ void calculaterates()
 
 void calculatemotors(double dt)
 {
-			double commandpitch;
-			double commandroll;
-			double commandyaw;
+	static double iTermroll = 0;
+	static double iTermpitch = 0;
+	static double iTermyaw = 0;
 
-			double dInput;
-			double error;
+	static double lastinputroll = 0;
+	static double lastinputpitch = 0;
+	static double lastinputyaw = 0;
+			
+	double commandpitch = pid(gxt, gx, &iTermpitch, &lastinputpitch, dt, &pitchrollgains);
+	double commandroll = pid(gyt, gy, &iTermroll, &lastinputroll, dt, &pitchrollgains);
+	double commandyaw = pid(gzt, gz, &iTermyaw, &lastinputyaw, dt, &yawgains);
 
-			static double iTermroll = 0;
-			static double iTermpitch = 0;
-			static double iTermyaw = 0;
+	uint8_t motor1_ = (int)(throttle + commandroll - commandpitch + commandyaw);
+	uint8_t motor2_ = (int)(throttle - commandroll - commandpitch - commandyaw);
+	uint8_t motor3_ = (int)(throttle - commandroll + commandpitch + commandyaw);
+	uint8_t motor4_ = (int)(throttle + commandroll + commandpitch - commandyaw);
 
-			static double lastinputroll = 0;
-			static double lastinputpitch = 0;
-			static double lastinputyaw = 0;
-
-			error = gxt - gx;
-			dInput = gx - lastinputroll;
-			iTermroll += pitchrollgains.kI * dt * error;
-			if(iTermroll > pitchrollgains.iMax)
-				iTermroll = pitchrollgains.iMax;
-			else if(iTermroll < pitchrollgains.iMin)
-				iTermroll = pitchrollgains.iMin;
-			commandroll = pitchrollgains.kP * error + iTermroll - pitchrollgains.kD * dInput / dt;
-			if(commandroll > pitchrollgains.max)
-				commandroll = pitchrollgains.max;
-			else if(commandroll < pitchrollgains.min)
-				commandroll = pitchrollgains.min;
-			lastinputroll = gx;
-
-			error = gyt - gy;
-			dInput = gy - lastinputpitch;
-			iTermpitch += pitchrollgains.kI * dt * error;
-			if(iTermpitch > pitchrollgains.iMax)
-				iTermpitch = pitchrollgains.iMax;
-			else if(iTermpitch < pitchrollgains.iMin)
-				iTermpitch = pitchrollgains.iMin;
-			commandpitch = pitchrollgains.kP * error + iTermpitch - pitchrollgains.kD * dInput / dt;
-			if(commandpitch > pitchrollgains.max)
-				commandpitch = pitchrollgains.max;
-			else if(commandpitch < pitchrollgains.min)
-				commandpitch = pitchrollgains.min;
-			lastinputpitch = gy;
-
-			error = gzt - gz;
-			dInput = gz - lastinputyaw;
-			iTermyaw += yawgains.kI * dt * error;
-			if(iTermyaw > yawgains.iMax)
-				iTermyaw = yawgains.iMax;
-			else if(iTermyaw < yawgains.iMin)
-				iTermyaw = yawgains.iMin;
-			commandyaw = yawgains.kP * error + iTermyaw - yawgains.kD * dInput / dt;
-			if(commandyaw > yawgains.max)
-				commandyaw = yawgains.max;
-			else if(commandyaw < yawgains.min)
-				commandyaw = yawgains.min;
-			lastinputyaw = gz;
-
-			uint8_t motor1_ = (int)(throttle + commandroll - commandpitch + commandyaw);
-			uint8_t motor2_ = (int)(throttle - commandroll - commandpitch - commandyaw);
-			uint8_t motor3_ = (int)(throttle - commandroll + commandpitch + commandyaw);
-			uint8_t motor4_ = (int)(throttle + commandroll + commandpitch - commandyaw);
-
-			if(motor1_ > 125)
-				motor1 = 125;
-			else if(motor1_ < 62)
-				motor1 = 62;
-			else
-				motor1 = motor1_;
-			if(motor2_ > 125)
-				motor2 = 125;
-			else if(motor2_ < 62)
-				motor2 = 62;
-			else
-				motor2 = motor2_;
-			if(motor3_ > 125)
-				motor3 = 125;
-			else if(motor3_ < 62)
-				motor3 = 62;
-			else
-				motor3 = motor3_;
-			if(motor4_ > 125)
-				motor4 = 125;
-			else if(motor4_ < 62)
-				motor4 = 62;
-			else
-				motor4 = motor4_;
+	if(motor1_ > 125)
+		motor1 = 125;
+	else if(motor1_ < 62)
+		motor1 = 62;
+	else
+		motor1 = motor1_;
+	if(motor2_ > 125)
+		motor2 = 125;
+	else if(motor2_ < 62)
+		motor2 = 62;
+	else
+		motor2 = motor2_;
+	if(motor3_ > 125)
+		motor3 = 125;
+	else if(motor3_ < 62)
+		motor3 = 62;
+	else
+		motor3 = motor3_;
+	if(motor4_ > 125)
+		motor4 = 125;
+	else if(motor4_ < 62)
+		motor4 = 62;
+	else
+		motor4 = motor4_;
 }
 
 int main(void)
