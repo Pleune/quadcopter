@@ -51,7 +51,7 @@ typedef struct {
 } gains_t;
 
 gains_t pitchrollgains = {
-	5.0, 0.0, 0.1,
+	3.0, 0.0, 0.1,
 	10.0, -10.0,
 	20.0, -20.0
 };
@@ -409,7 +409,7 @@ void integraterot(double dt)
 	 *
 	 * All quarternions q are (q0, q1, q2, q3)
 	 */
-	double gyroK = .25 * (long double)dt * (long double)T1PSK / (long double)F_CPU;
+	double gyroK = .25 * dt;
 	double gx_ = (lastgx+gx) * gyroK;
 	double gy_ = (lastgy+gy) * gyroK;
 	double gz_ = (lastgz+gz) * gyroK;
@@ -812,10 +812,10 @@ int main(void)
 
 		integraterot(dt);
 		recievepacket(dt);
+		calculaterates();
 
 		if(throttle > 62)
 		{
-			calculaterates();
 			calculatemotors(dt);
 
 		} else {
@@ -823,14 +823,6 @@ int main(void)
 			motor2 = 62;
 			motor3 = 62;
 			motor4 = 62;
-		}
-
-		if(p++ == 200)
-		{
-			p = 0;
-			char string[64];
-			sprintf(string, "1: %f\t2: %f\t3: %f\t4: %f\t%i\n", gxt, gyt, gzt, 0.0, throttle);
-			msg(string);
 		}
 
 		lastgx = gx;
