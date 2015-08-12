@@ -7,8 +7,6 @@
 #include <string.h>
 #include <stdio.h>
 
-#define GYRO
-
 /**
  * The I2C speed and calculator
  * F_SCL is the clock speed
@@ -31,18 +29,7 @@
  */
 #define NRFCEHIGH() (PORTB |= 0x01)
 #define NRFCELOW() (PORTB &= 0xFE)
-
-/**
- * DEBUG LEDS
- */
-#define LED1ON() (PORTD |= 0x80)
-#define LED1OFF() (PORTD &= 0x7F)
-#define LED2ON() (PORTB |= 0x02)
-#define LED2OFF() (PORTB &= 0xFD)
-#define LED3ON() (PORTB |= 0x04)
-#define LED3OFF() (PORTB &= 0xFB)
-#define LED4ON() (PORTB |= 0x10)
-#define LED4OFF() (PORTB &= 0xEF)
+#define T1PSK 64//set this the same as the prescalar below
 
 int enabled = 0;
 
@@ -53,41 +40,38 @@ uint8_t motor2 = 62;
 uint8_t motor3 = 62;
 uint8_t motor4 = 62;
 
-double kProll = 5.0;
-double kIroll = 1.0;
-double kDroll = 0.3;
+typedef struct {
+	double kP;
+	double kI;
+	double kD;
+	double iMax;
+	double iMin;
+	double max;
+	double min;
+} gains_t;
 
-double kPpitch = 5.0;
-double kIpitch = 1.0;
-double kDpitch = 0.3;
+gains_t pitchrollgains = {
+	5.0, 0.0, 0.1,
+	10.0, -10.0,
+	20.0, -20.0
+};
 
-double kPyaw = 5.0;
-double kIyaw = 1.0;
-double kDyaw = 0.05;
+gains_t yawgains = {
+	5.0, 0.0, 0.05,
+	20.0, -20.0,
+	20.0, -20.0
+};
 
-double iMaxroll = 20;
-double iMaxpitch = 20;
-double iMaxyaw = 20;
-
-double iMinroll = -20;
-double iMinpitch = -20;
-double iMinyaw = -20;
-
-double maxcommandroll = 25;
-double maxcommandpitch = 25;
-double maxcommandyaw = 25;
-
-double mincommandroll = -25;
-double mincommandpitch = -25;
-double mincommandyaw = -25;
-
-double smoothness = 10;
-
-//target orientation
+/* target orientation */
 double qt0 = 1.0;
 double qt1 = 0.0;
 double qt2 = 0.0;
 double qt3 = 0.0;
+
+/* target rates */
+double gxt = 0.0;
+double gyt = 0.0;
+double gzt = 0.0;
 
 /**
  * These are the values read from the IMU.
@@ -97,24 +81,16 @@ double ax, ay, az = 0;
 double gx, gy, gz = 0;
 double z_gx, z_gy, z_gz = 0;
 double temp = 0;
+double lastgx = 0.0, lastgy = 0.0, lastgz = 0.0;
 
 /*multiplyer to the accelerometer error part added to the qyro data*/
 double accKp = .1;
 
 /*the orientation quaternion*/
-double q0 = 1, q1 = 0, q2 = 0, q3 = 0;
-
-/**
- * Shared variables:
- *
- * These are used by the serial interrupt to communicate with
- * the main loop.
- *
- * flag bits:
- * 7: print deltaT
- * 6: reset q[0-3]
- */
-uint8_t flags = 0x00;
+double q0 = 1;
+double q1 = 0;
+double q2 = 0;
+double q3 = 0;
 
 uint8_t I2CGetStatus(void)
 {
@@ -240,6 +216,11 @@ int mpu6050UpdateAll()
 	gx = ((I2CReadACK()<<8) | I2CReadACK()) - z_gx;
 	gy = ((I2CReadACK()<<8) | I2CReadACK()) - z_gy;
 	gz = ((I2CReadACK()<<8) | I2CReadNACK()) - z_gz;
+
+	const double gyroK = (long double)/* max deg/s */2000 / ((long double)/* 2^15 */32768) * /*Deg to rad*/(3.14159265359/180);
+	gx *= gyroK;
+	gy *= gyroK;
+	gz *= gyroK;
 
 	I2CStop();
 
@@ -408,11 +389,315 @@ void msg(char *s)
 
 }
 
+void integraterot(double dt)
+{
+	/**
+	 * This is the code that keeps track of the orientation of the quad copter.
+	 *
+	 * HOWEVER, the quarternion keeps track of how to rotate the world-space realitive to the quadcopter-space,
+	 * NOT the other way around.
+	 *
+	 * That means the common equasion vnew = Q * vorig * Q^-1 will get you a vector in world space from a vector in quad space.
+	 *
+	 * vorig is a quarternion that is (0, v1, v2, v3)
+	 * v[1-3] are just a vector.
+	 *
+	 * The same thing for vnew, q0 will always end up as 0.
+	 *
+	 * world-space is realitive to the world/gravity/etc.
+	 * quad-space is realitive to the axies drawn on the IMO
+	 *
+	 * All quarternions q are (q0, q1, q2, q3)
+	 */
+	double gyroK = .25 * (long double)dt * (long double)T1PSK / (long double)F_CPU;
+	double gx_ = (lastgx+gx) * gyroK;
+	double gy_ = (lastgy+gy) * gyroK;
+	double gz_ = (lastgz+gz) * gyroK;
+	double mag = sqrt(ax*ax + ay*ay + az*az);
+
+	/**
+	 * Normalized UP!!! vector
+	 * According to any accelerometer, everything is accelerating up at 1g.
+	 *
+	 * Works best with the normalized quarternions and
+	 * cross product to produce onsistant results.
+	 */
+	double ax_ = ax / mag;
+	double ay_ = ay / mag;
+	double az_ = az / mag;
+
+	/**
+	 * This uses the oppisite of the
+	 * vnew = Q * vorig * Q^-1
+	 * It uses:
+	 * vnew = Q-1 * vorig * Q
+	 * to go from world-space to quad-space
+	 *
+	 * For any quarternions Q,
+	 * Q * Q^-1 = 1, or the multiplicitive quarternions idenity (1, 0, 0, 0)
+	 * this only happens if the multiplications are right after each other,
+	 * so Q * B * Q^-1 != B
+	 *
+	 * The inverse of a quaternions is however the oppisite of the non-inverted quaternion...
+	 * This means that when using the quaternion in the equasion above with inverted quaternions,
+	 * it preforms the reverse of the rotation.
+	 *
+	 * Also note that the inverse of a unit quaternion is also the conjugate
+	 * to conjugate a quaternion, invert q1, q2 and q3.
+	 *
+	 * * * *
+	 *
+	 * What the below block of code does is converts the world-space vector (0, 0, 1)
+	 * into the same vector in quad-sapce by the equasion Q-1 * (0, [0, 0, 1]) * Q...
+	 *
+	 * estx are parts 1-3 of the resulting quaternion, part 0 will always be 0.
+	 *
+	 * This should be the same vector that the accelerometer reads out
+	 * if the gyros were perfect.
+	 *
+	 * Each component of est is then divided by 2, simply to save instructions.
+	 */
+	double estx = 2*q1*q3 - 2*q0*q2;
+	double esty = 2*q0*q1 + 2*q2*q3;
+	double estz = (q0*q0 - q1*q1 - q2*q2 + q3*q3);
+
+	/**
+	 * The error calculated here is the cross product of (the accelerometer vector) x (the vector from above).
+	 *
+	 * The cross product essentally calculates rotational velocities around each axis
+	 * with the correct sign to move the vector above to the accelerometer vector
+	 * according to the right hand rule.
+	 *
+	 * To get a more proportional correction to how far apart the vectors are,
+	 * use atan2.
+	 */
+	double errorx = ay_*estz - az_*esty;
+	double errory = az_*estx - ax_*estz;
+	double errorz = ax_*esty - ay_*estx;
+
+	/**
+	 * The error from above is now just added to the gyro readiong
+	 * for this iteration...
+	 *
+	 * This means that the larger the qyro readings,
+	 * then the larger of a weight they have becasue the
+	 * error part is never scaled proportionally to
+	 * the qyro readings.
+	 *
+	 * Ex:
+	 * in
+	 * 2+10
+	 * 2 has a 2/12 weight
+	 *
+	 * While in
+	 * 2 + 100
+	 * 2 has a 2/102 weight
+	 */
+	gx_ += accKp * errorx * dt;
+	gy_ += accKp * errory * dt;
+	gz_ += accKp * errorz * dt;
+
+	/**
+	 * This block takes integrated qyro velocities (change in angle) and integrates a quaternion with them.
+	 * it can be done seperatly from the accelerometer junk above.
+	 *
+	 * It uses a formula that can be derrived from an extension of Euler's formula
+	 * shown here: https://fgiesen.wordpress.com/2012/08/24/quaternion-differentiation/
+	 *
+	 * Basically,
+	 * Qold = Qold + Qold*(0, gx, gy, gz)*dT
+	 * integrates a quaternion based on the gyro velocities.
+	 *
+	 * The gyro values must be in radians.
+	 */
+	q0 += -q1*gx_ - q2*gy_ - q3*gz_;
+	q1 += q0*gx_ + q2*gz_ - q3*gy_;
+	q2 += q0*gy_ - q1*gz_ + q3*gx_;
+	q3 += q0*gz_ + q1*gy_ - q2*gx_;
+
+	/**
+	 * we must now shrink the quaternion back down to a unit vector
+	 * this does not affect the rotation that it describes
+	 */
+	mag = sqrt(q0*q0 + q1*q1 + q2*q2 + q3*q3);
+
+	q0 /= mag;
+	q1 /= mag;
+	q2 /= mag;
+	q3 /= mag;
+}
+
+void recievepacket(double dt)
+{
+	static long double time = 0;
+
+	NRFStart();
+	unsigned char status = SPITransmit(0x61);
+
+	if(status & 0x40)
+	{
+		/* just to generate the clock */
+		unsigned char data = SPITransmit(0x00);
+
+		if(data == 0xAA)
+		{
+			throttle = SPITransmit(0x00);
+
+			char build[4];
+			build[0] = SPITransmit(0x00);
+			build[1] = SPITransmit(0x00);
+			build[2] = SPITransmit(0x00);
+			build[3] = SPITransmit(0x00);
+			qt0 = *((double *)build);
+
+			build[0] = SPITransmit(0x00);
+			build[1] = SPITransmit(0x00);
+			build[2] = SPITransmit(0x00);
+			build[3] = SPITransmit(0x00);
+			qt1 = *((double *)build);
+
+			build[0] = SPITransmit(0x00);
+			build[1] = SPITransmit(0x00);
+			build[2] = SPITransmit(0x00);
+			build[3] = SPITransmit(0x00);
+			qt2 = *((double *)build);
+
+			build[0] = SPITransmit(0x00);
+			build[1] = SPITransmit(0x00);
+			build[2] = SPITransmit(0x00);
+			build[3] = SPITransmit(0x00);
+			qt3 = *((double *)build);
+		}
+		NRFStop();
+
+		NRFStart();
+		SPITransmit(0x27);
+		SPITransmit(0x40);
+		NRFStop();
+		time = 0;
+	} else {
+		time += dt;
+		if(time > .5)
+			throttle = 62;
+		NRFStop();
+	}
+}
+
+void calculaterates()
+{
+	double qt0_ = qt0 - q0;
+	double qt1_ = qt1 - q1;
+	double qt2_ = qt2 - q2;
+	double qt3_ = qt3 - q3;
+
+	if(qt0*q0 + qt1*q1 + qt2*q2 + qt3*q3 > 0)
+	{
+		gxt = q0*qt1_ - q1*qt0_ + q2*qt3_ - q3*qt2_;
+		gyt = q0*qt2_ - q1*qt3_ - q2*qt0_ + q3*qt1_;
+		gzt = q0*qt3_ + q1*qt2_ - q2*qt1_ - q3*qt0_;
+	} else {
+		gxt = -q0*qt1_ + q1*qt0_ - q2*qt3_ + q3*qt2_;
+		gyt = -q0*qt2_ + q1*qt3_ + q2*qt0_ - q3*qt1_;
+		gzt = -q0*qt3_ - q1*qt2_ + q2*qt1_ + q3*qt0_;
+	}
+
+	gxt *= 5.0;
+	gyt *= 5.0;
+	gzt *= 5.0;
+}
+
+void calculatemotors(double dt)
+{
+			double commandpitch;
+			double commandroll;
+			double commandyaw;
+
+			double dInput;
+			double error;
+
+			static double iTermroll = 0;
+			static double iTermpitch = 0;
+			static double iTermyaw = 0;
+
+			static double lastinputroll = 0;
+			static double lastinputpitch = 0;
+			static double lastinputyaw = 0;
+
+			error = gxt - gx;
+			dInput = gx - lastinputroll;
+			iTermroll += pitchrollgains.kI * dt * error;
+			if(iTermroll > pitchrollgains.iMax)
+				iTermroll = pitchrollgains.iMax;
+			else if(iTermroll < pitchrollgains.iMin)
+				iTermroll = pitchrollgains.iMin;
+			commandroll = pitchrollgains.kP * error + iTermroll - pitchrollgains.kD * dInput / dt;
+			if(commandroll > pitchrollgains.max)
+				commandroll = pitchrollgains.max;
+			else if(commandroll < pitchrollgains.min)
+				commandroll = pitchrollgains.min;
+			lastinputroll = gx;
+
+			error = gyt - gy;
+			dInput = gy - lastinputpitch;
+			iTermpitch += pitchrollgains.kI * dt * error;
+			if(iTermpitch > pitchrollgains.iMax)
+				iTermpitch = pitchrollgains.iMax;
+			else if(iTermpitch < pitchrollgains.iMin)
+				iTermpitch = pitchrollgains.iMin;
+			commandpitch = pitchrollgains.kP * error + iTermpitch - pitchrollgains.kD * dInput / dt;
+			if(commandpitch > pitchrollgains.max)
+				commandpitch = pitchrollgains.max;
+			else if(commandpitch < pitchrollgains.min)
+				commandpitch = pitchrollgains.min;
+			lastinputpitch = gy;
+
+			error = gzt - gz;
+			dInput = gz - lastinputyaw;
+			iTermyaw += yawgains.kI * dt * error;
+			if(iTermyaw > yawgains.iMax)
+				iTermyaw = yawgains.iMax;
+			else if(iTermyaw < yawgains.iMin)
+				iTermyaw = yawgains.iMin;
+			commandyaw = yawgains.kP * error + iTermyaw - yawgains.kD * dInput / dt;
+			if(commandyaw > yawgains.max)
+				commandyaw = yawgains.max;
+			else if(commandyaw < yawgains.min)
+				commandyaw = yawgains.min;
+			lastinputyaw = gz;
+
+			uint8_t motor1_ = (int)(throttle + commandroll - commandpitch + commandyaw);
+			uint8_t motor2_ = (int)(throttle - commandroll - commandpitch - commandyaw);
+			uint8_t motor3_ = (int)(throttle - commandroll + commandpitch + commandyaw);
+			uint8_t motor4_ = (int)(throttle + commandroll + commandpitch - commandyaw);
+
+			if(motor1_ > 125)
+				motor1 = 125;
+			else if(motor1_ < 62)
+				motor1 = 62;
+			else
+				motor1 = motor1_;
+			if(motor2_ > 125)
+				motor2 = 125;
+			else if(motor2_ < 62)
+				motor2 = 62;
+			else
+				motor2 = motor2_;
+			if(motor3_ > 125)
+				motor3 = 125;
+			else if(motor3_ < 62)
+				motor3 = 62;
+			else
+				motor3 = motor3_;
+			if(motor4_ > 125)
+				motor4 = 125;
+			else if(motor4_ < 62)
+				motor4 = 62;
+			else
+				motor4 = motor4_;
+}
+
 int main(void)
 {
-	//values for use in the trapizoydal sum
-	double lastgx = gx, lastgy = gy, lastgz = gz;
-
 	//print information in the loop every x loops,
 	int p = 0;
 
@@ -432,7 +717,6 @@ int main(void)
 	 *
 	 * A prescalar of 256 overflows almost exactly once a seccond at 16Mhz
 	 */
-#define T1PSK 64//set this the same as the prescalar below
 	TCCR1B = 0x03;//64
 
 	/**
@@ -466,10 +750,8 @@ int main(void)
 	TWBR = TWBR_CALC;
 	TWCR = (1<<TWEN);
 
-	mpu6050Init();
-
 	/**
-	 * Init NRF
+	 * Init spi
 	 */
 	UBRR0 = 0;
 	/* Setting the XCKn port pin as output, enables master
@@ -487,6 +769,7 @@ int main(void)
 	 */
 	UBRR0 = 1;
 
+	mpu6050Init();
 	NRFInit();
 
 	_delay_ms(2600);
@@ -498,440 +781,56 @@ int main(void)
 
 	msg("starting\n");
 
-	_delay_ms(100);
-	LED1OFF();
-	_delay_ms(100);
-	LED2OFF();
-	_delay_ms(100);
-	LED3OFF();
-	_delay_ms(100);
-	LED4OFF();
-	_delay_ms(200);
-	LED4ON();
-	_delay_ms(100);
-	LED3ON();
-	_delay_ms(100);
-	LED2ON();
-	_delay_ms(100);
-	LED1ON();
-
-#ifdef GYRO
-
 	mpu6050Calibrate();
 	msg("calibrated\n");
-#endif
 
 	uint16_t lastclock = TCNT1;//16-bit read handled by compiler
 	while(1)
 	{
 		uint16_t clock;
-		uint16_t dt;
+		double dt;
 
 		clock = TCNT1;
-#ifdef GYRO
+
 		/**
 		 * Read sensors into memory here for the most accurate deltaT/sensor-data combination.
 		 */
 		mpu6050UpdateAll();
-#endif
+
 		/**
 		 * Calculate deltaT here,
 		 * and reset it for next loop.
 		 *
 		 * deltaT is calculated based on the 16-bit timer0, which effectly counts clock cycles.
 		 */
-		dt = clock - lastclock;
-		lastclock = clock;
+		dt = (double)(clock - lastclock) * (double)T1PSK / (double)F_CPU;
+		lastclock = clock;\
 
 		/******************************************************************
 		 * Start calculations
 		 */
-#ifdef GYRO
-		if(flags&0x40)
-		{
-			q0 = 1;
-			q1 = 0;
-			q2 = 0;
-			q3 = 0;
 
-			flags &= 0xBF;
-		}
-		else
-		{
-			/**
-			 * This is the code that keeps track of the orientation of the quad copter.
-			 *
-			 * HOWEVER, the quarternion keeps track of how to rotate the world-space realitive to the quadcopter-space,
-			 * NOT the other way around.
-			 *
-			 * That means the common equasion vnew = Q * vorig * Q^-1 will get you a vector in world space from a vector in quad space.
-			 *
-			 * vorig is a quarternion that is (0, v1, v2, v3)
-			 * v[1-3] are just a vector.
-			 *
-			 * The same thing for vnew, q0 will always end up as 0.
-			 *
-			 * world-space is realitive to the world/gravity/etc.
-			 * quad-space is realitive to the axies drawn on the IMO
-			 *
-			 * All quarternions q are (q0, q1, q2, q3)
-			 */
-
-			/**
-			 * Trapizoydal sum for greater accuracy.
-			 */
-#define gyroK (.25*(long double)dt * (((long double)/* timer1 prescalar */ T1PSK *(long double)/* max deg/s */2000)/((long double)F_CPU*(long double)/* 2^15 */32768)) * /*Deg to rad*/(3.14159265359/180))
-			double gx_ = (lastgx+gx) * gyroK;
-			double gy_ = (lastgy+gy) * gyroK;
-			double gz_ = (lastgz+gz) * gyroK;
-
-			double mag = sqrt(ax*ax + ay*ay + az*az);
-
-			/**
-			 * Normalized UP!!! vector
-			 * According to any accelerometer, everything is accelerating up at 1g.
-			 *
-			 * Works best with the normalized quarternions and
-			 * cross product to produce onsistant results.
-			 */
-			double ax_ = ax / mag;
-			double ay_ = ay / mag;
-			double az_ = az / mag;
-
-			/**
-			 * This uses the oppisite of the
-			 * vnew = Q * vorig * Q^-1
-			 * It uses:
-			 * vnew = Q-1 * vorig * Q
-			 * to go from world-space to quad-space
-			 *
-			 * For any quarternions Q,
-			 * Q * Q^-1 = 1, or the multiplicitive quarternions idenity (1, 0, 0, 0)
-			 * this only happens if the multiplications are right after each other,
-			 * so Q * B * Q^-1 != B
-			 *
-			 * The inverse of a quaternions is however the oppisite of the non-inverted quaternion...
-			 * This means that when using the quaternion in the equasion above with inverted quaternions,
-			 * it preforms the reverse of the rotation.
-			 *
-			 * Also note that the inverse of a unit quaternion is also the conjugate
-			 * to conjugate a quaternion, invert q1, q2 and q3.
-			 *
-			 * * * *
-			 *
-			 * What the below block of code does is converts the world-space vector (0, 0, 1)
-			 * into the same vector in quad-sapce by the equasion Q-1 * (0, [0, 0, 1]) * Q...
-			 *
-			 * estx are parts 1-3 of the resulting quaternion, part 0 will always be 0.
-			 *
-			 * This should be the same vector that the accelerometer reads out
-			 * if the gyros were perfect.
-			 *
-			 * Each component of est is then divided by 2, simply to save instructions.
-			 */
-			double estx = 2*q1*q3 - 2*q0*q2;
-			double esty = 2*q0*q1 + 2*q2*q3;
-			double estz = (q0*q0 - q1*q1 - q2*q2 + q3*q3);
-
-			/**
-			 * The error calculated here is the cross product of (the accelerometer vector) x (the vector from above).
-			 *
-			 * The cross product essentally calculates rotational velocities around each axis
-			 * with the correct sign to move the vector above to the accelerometer vector
-			 * according to the right hand rule.
-			 *
-			 * To get a more proportional correction to how far apart the vectors are,
-			 * use atan2.
-			 */
-			double errorx = ay_*estz - az_*esty;
-			double errory = az_*estx - ax_*estz;
-			double errorz = ax_*esty - ay_*estx;
-
-			/**
-			 * The error from above is now just added to the gyro readiong
-			 * for this iteration...
-			 *
-			 * This means that the larger the qyro readings,
-			 * then the larger of a weight they have becasue the
-			 * error part is never scaled proportionally to
-			 * the qyro readings.
-			 *
-			 * Ex:
-			 * in
-			 * 2+10
-			 * 2 has a 2/12 weight
-			 *
-			 * While in
-			 * 2 + 100
-			 * 2 has a 2/102 weight
-			 */
-			gx_ += accKp * errorx * dt * T1PSK / 16000000;
-			gy_ += accKp * errory * dt * T1PSK / 16000000;
-			gz_ += accKp * errorz * dt * T1PSK / 16000000;
-
-			/**
-			 * This block takes integrated qyro velocities (change in angle) and integrates a quaternion with them.
-			 * it can be done seperatly from the accelerometer junk above.
-			 *
-			 * It uses a formula that can be derrived from an extension of Euler's formula
-			 * shown here: https://fgiesen.wordpress.com/2012/08/24/quaternion-differentiation/
-			 *
-			 * Basically,
-			 * Qold = Qold + Qold*(0, gx, gy, gz)*dT
-			 * integrates a quaternion based on the gyro velocities.
-			 *
-			 * The gyro values must be in radians.
-			 */
-			q0 += -q1*gx_ - q2*gy_ - q3*gz_;
-			q1 += q0*gx_ + q2*gz_ - q3*gy_;
-			q2 += q0*gy_ - q1*gz_ + q3*gx_;
-			q3 += q0*gz_ + q1*gy_ - q2*gx_;
-
-			/**
-			 * we must now shrink the quaternion back down to a unit vector
-			 * this does not affect the rotation that it describes
-			 */
-			mag = sqrt(q0*q0 + q1*q1 + q2*q2 + q3*q3);
-
-			q0 /= mag;
-			q1 /= mag;
-			q2 /= mag;
-			q3 /= mag;
-		}
-#endif
-
-
-#define Kdt ((double)64.0 / (double)F_CPU)
-#define gyroK (long double)/* max deg/s */2000 / ((long double)/* 2^15 */32768) * /*Deg to rad*/(3.14159265359/180)
-		long double dT_ = (double)dt * Kdt;
-		/**
-		 * ask the nrf for a RXx packet,
-		 * meanwhile it shifts out the status register.
-		 *
-		 * if the status reg says there is a packet, it will be shifted out next.
-		 */
-		static long double time = 0;
-
-		NRFStart();
-		unsigned char status = SPITransmit(0x61);
-
-		if(status & 0x40)
-		{
-			/* just to generate the clock */
-			unsigned char data = SPITransmit(0x00);
-
-			if(data == 0xAA)
-			{
-				throttle = SPITransmit(0x00);
-
-				char build[4];
-				build[0] = SPITransmit(0x00);
-				build[1] = SPITransmit(0x00);
-				build[2] = SPITransmit(0x00);
-				build[3] = SPITransmit(0x00);
-				qt0 = *((double *)build);
-
-				build[0] = SPITransmit(0x00);
-				build[1] = SPITransmit(0x00);
-				build[2] = SPITransmit(0x00);
-				build[3] = SPITransmit(0x00);
-				qt1 = *((double *)build);
-
-				build[0] = SPITransmit(0x00);
-				build[1] = SPITransmit(0x00);
-				build[2] = SPITransmit(0x00);
-				build[3] = SPITransmit(0x00);
-				qt2 = *((double *)build);
-
-				build[0] = SPITransmit(0x00);
-				build[1] = SPITransmit(0x00);
-				build[2] = SPITransmit(0x00);
-				build[3] = SPITransmit(0x00);
-				qt3 = *((double *)build);
-			}
-
-			NRFStop();
-
-			NRFStart();
-			SPITransmit(0x27);
-			SPITransmit(0x40);
-			NRFStop();
-			time = 0;
-		} else {
-			time += dT_;
-
-			if(time > .5)
-				throttle = 62;
-
-			NRFStop();
-		}
-
-		/**
-		 * http://arxiv.org/pdf/0811.2889.pdf
-		 */
-		//double qd0;
-		double qd1;
-		double qd2;
-		double qd3;
-
-		double qt0_, qt1_, qt2_, qt3_;
-
-		if(qt0*q0 + qt1*q1 + qt2*q2 + qt3*q3 > 0)
-		{
-			qt0_ = qt0 - q0;
-			qt1_ = qt1 - q1;
-			qt2_ = qt2 - q2;
-			qt3_ = qt3 - q3;
-			//qd0 = q0*qt0 + q1*qt1 + q2*qt2 + q3*qt3;
-			qd1 = q0*qt1_ - q1*qt0_ + q2*qt3_ - q3*qt2_;
-			qd2 = q0*qt2_ - q1*qt3_ - q2*qt0_ + q3*qt1_;
-			qd3 = q0*qt3_ + q1*qt2_ - q2*qt1_ - q3*qt0_;
-		} else {
-			qt0_ = qt0 - q0;
-			qt1_ = qt1 - q1;
-			qt2_ = qt2 - q2;
-			qt3_ = qt3 - q3;
-			//qd0 = -q0*qt0 - q1*qt1 - q2*qt2 - q3*qt3;
-			qd1 = -q0*qt1_ + q1*qt0_ - q2*qt3_ + q3*qt2_;
-			qd2 = -q0*qt2_ + q1*qt3_ + q2*qt0_ - q3*qt1_;
-			qd3 = -q0*qt3_ - q1*qt2_ + q2*qt1_ + q3*qt0_;
-		}
-
-		if(flags&0x20)
-		{
-			mpu6050Calibrate();
-			flags &= 0xDF;
-		}
+		integraterot(dt);
+		recievepacket(dt);
 
 		if(throttle > 62)
 		{
-			double commandpitch;
-			double commandroll;
-			double commandyaw;
+			calculaterates();
+			calculatemotors(dt);
 
-			double gx_ = gx * gyroK;
-			double gy_ = gy * gyroK;
-			double gz_ = gz * gyroK;
-
-			static double gx_s = 0;
-			static double gy_s = 0;
-			static double gz_s = 0;
-
-			double weight = smoothness * dT_;
-
-			gx_s = gx_s * (1.0 - weight) + gx_ * (weight);
-			gy_s = gy_s * (1.0 - weight) + gy_ * (weight);
-			gz_s = gz_s * (1.0 - weight) + gz_ * (weight);
-
-			double dInput;
-			double error;
-
-			static double iTermroll = 0;
-			static double iTermpitch = 0;
-			static double iTermyaw = 0;
-
-			static double lastinputroll = 0;
-			static double lastinputpitch = 0;
-			static double lastinputyaw = 0;
-
-			qd1 *= 5.0;
-			qd2 *= 5.0;
-			qd3 *= 5.0;
-
-			static double qd1_s = 0;
-			static double qd2_s = 0;
-			static double qd3_s = 0;
-
-			double qd_sweight = .6;
-
-			qd1_s = qd1_s * (1.0 - qd_sweight) + qd1 * (qd_sweight);
-			qd2_s = qd2_s * (1.0 - qd_sweight) + qd2 * (qd_sweight);
-			qd3_s = qd3_s * (1.0 - qd_sweight) + qd3 * (qd_sweight);
-
-			error = qd1_s - gx_;
-			dInput = gx_s - lastinputroll;
-			iTermroll += kIroll * dT_ * error;
-			if(iTermroll > iMaxroll)
-				iTermroll = iMaxroll;
-			else if(iTermroll < iMinroll)
-				iTermroll = iMinroll;
-			commandroll = kProll * error + iTermroll - kDroll * dInput / dT_;
-			if(commandroll > maxcommandroll)
-				commandroll = maxcommandroll;
-			else if(commandroll < mincommandroll)
-				commandroll = mincommandroll;
-			lastinputroll = gx_s;
-
-			error = qd2_s - gy_;
-			dInput = gy_s - lastinputpitch;
-			iTermpitch += kIpitch * dT_ * error;
-			if(iTermpitch > iMaxpitch)
-				iTermpitch = iMaxpitch;
-			else if(iTermpitch < iMinpitch)
-				iTermpitch = iMinpitch;
-			commandpitch = kPpitch * error + iTermpitch - kDpitch * dInput / dT_;
-			if(commandpitch > maxcommandpitch)
-				commandpitch = maxcommandpitch;
-			else if(commandpitch < mincommandpitch)
-				commandpitch = mincommandpitch;
-			lastinputpitch = gy_s;
-
-			error = qd3_s - gz_;
-			dInput = gz_s - lastinputyaw;
-			iTermyaw += kIyaw * dT_ * error;
-			if(iTermyaw > iMaxyaw)
-				iTermyaw = iMaxyaw;
-			else if(iTermyaw < iMinyaw)
-				iTermyaw = iMinyaw;
-			commandyaw = kPyaw * error + iTermyaw - kDyaw * dInput / dT_;
-			if(commandyaw > maxcommandyaw)
-				commandyaw = maxcommandyaw;
-			else if(commandyaw < mincommandyaw)
-				commandyaw = mincommandyaw;
-			lastinputyaw = gz_s;
-
-		if(p++ == 200)
-		{
-			p = 0;
-			char string[64];
-			sprintf(string, "1: %f\t2: %f\t3: %f\t4: %f\t%i\n", qd1, qd2, qd3, 0.0, throttle);
-			msg(string);
-		}
-
-			motor1 = (int)(throttle + commandroll - commandpitch + commandyaw);
-			motor2 = (int)(throttle - commandroll - commandpitch - commandyaw);
-			motor3 = (int)(throttle - commandroll + commandpitch + commandyaw);
-			motor4 = (int)(throttle + commandroll + commandpitch - commandyaw);
-
-			if(motor1 > 125)
-				motor1 = 125;
-			else if(motor1 < 62)
-				motor1 = 62;
-			if(motor2 > 125)
-				motor2 = 125;
-			else if(motor2 < 62)
-				motor2 = 62;
-			if(motor3 > 125)
-				motor3 = 125;
-			else if(motor3 < 62)
-				motor3 = 62;
-			if(motor4 > 125)
-				motor4 = 125;
-			else if(motor4 < 62)
-				motor4 = 62;
 		} else {
 			motor1 = 62;
 			motor2 = 62;
 			motor3 = 62;
 			motor4 = 62;
+		}
 
 		if(p++ == 200)
 		{
 			p = 0;
 			char string[64];
-			sprintf(string, "1: %i\n", throttle);
+			sprintf(string, "1: %f\t2: %f\t3: %f\t4: %f\t%i\n", gxt, gyt, gzt, 0.0, throttle);
 			msg(string);
-		}
 		}
 
 		lastgx = gx;
