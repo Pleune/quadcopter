@@ -635,8 +635,8 @@ void calculatemotors(double dt)
 	static double lastinputpitch = 0;
 	static double lastinputyaw = 0;
 			
-	double commandpitch = pid(gxt, gx, &iTermpitch, &lastinputpitch, dt, &pitchrollgains);
-	double commandroll = pid(gyt, gy, &iTermroll, &lastinputroll, dt, &pitchrollgains);
+	double commandpitch = pid(gyt, gy, &iTermpitch, &lastinputpitch, dt, &pitchrollgains);
+	double commandroll = pid(gxt, gx, &iTermroll, &lastinputroll, dt, &pitchrollgains);
 	double commandyaw = pid(gzt, gz, &iTermyaw, &lastinputyaw, dt, &yawgains);
 
 	uint8_t motor1_ = (int)(throttle + commandroll - commandpitch + commandyaw);
